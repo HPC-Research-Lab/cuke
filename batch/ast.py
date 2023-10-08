@@ -17,16 +17,22 @@ class Batch(ASTNode):
             self.base = base
             self.base.ref_count += 1
 
-        self.batch_size = size[0]
+        
         if (len(size) == 2):
             self.item_type = 'vec'
             self.dim = size[1]
+            self.batch_size = size[0]
         elif len(size) == 3:
             self.item_type = 'mat'
             self.dim1 = size[1]
             self.dim2 = size[2]
+            self.batch_size = size[0]
         elif len(size) == 1:
             self.item_type = 'scal'
+            self.batch_size = size[0]
+        elif len(size) == 0:
+            self.item_type = 'const'
+            self.batch_size = 0
         else:
             raise TypeError('Batch item type not supported')
 
@@ -69,8 +75,12 @@ def bvm(v1: Batch, v2: Batch):
     assert v1.dim == v2.dim1
     return BatchOp('vec_mul_mat', v1, v2)
 
+def bov(v1: Batch, v2: Batch):
+    assert v1.item_type == 'vec' and v2.item_type == 'vec'
+    return BatchOp('vec_outer_vec', v1, v2)
+
 class BatchOp(Batch):
-    Types = ['scal_mul_vec', 'vec_mul_vec', 'vec_mul_mat'] + list(core.ast.op_mapping.keys())
+    Types = ['scal_mul_vec', 'vec_mul_vec', 'vec_mul_mat', 'vec_outer_vec'] + list(core.ast.op_mapping.keys())
 
     def __init__(self, op_type, *operators):
         assert op_type in BatchOp.Types
@@ -126,6 +136,11 @@ class BatchOp(Batch):
             bsize = self.operators[0].batch_size
             dim = self.operators[1].dim2
             res = Tensor(name, (bsize, dim), dtype)
+            super().__init__(res)
+
+        elif op_type == 'vec_outer_vec':
+            bsize = self.operators[0].batch_size
+            res = Tensor(name, (bsize, self.operators[0].dim, self.operators[1].dim ), dtype)
             super().__init__(res)
 
         else: # TODO: complete other ops
