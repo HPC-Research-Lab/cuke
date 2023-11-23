@@ -1,7 +1,10 @@
+import codegen.cpu
+import transform.fuse
 from core.ir import *
 from core.asg import *
 from helpers import rebind_iterate
 import helpers
+from transform.fuse import fuser, basic_rule
 
 def _is_oob_indexing(ir, it, ofs):
     if type(ir) == Indexing:
@@ -87,11 +90,43 @@ def _resolve_loops(scope):
 
 def lower_bound_padding(asg):
     def action(node, res):
-        if type(node) == TensorOp and node.op_type in list(arith_op.keys()) + ['setval']:
+        if type(node) == TensorOp and node.op_type in list(arith_op.keys()) + math_op + ['setval']:
             res.append(node.compute)
 
     t = helpers.ASGTraversal(action)
     ir = t(asg)
     for l in ir:
         _resolve_loops(l)
+
+
+def test1():
+    A = Tensor('A', (10, 20))
+    B = Tensor('B', (10, 20))
+    res = A[-1:] + B[-1:]
+
+    print(codegen.cpu.print_cpp(res._gen_ir()))
+
+def test2():
+    A = Tensor('A', (10, 20))
+    B = Tensor('B', (10, 20))
+    res = B[-1:3].abs() + 1
+
+    f = fuser()
+    f.register(basic_rule)
+    print(codegen.cpu.print_cpp(f.fuse(res._gen_ir())))
+
+
+def test3():
+    A = Tensor('A', (10, 20))
+    B = Tensor('B', (10, 20))
+    res = B[-1:3][-2:1].abs() + 1
+
+    f = fuser()
+    f.register(basic_rule)
+    print(codegen.cpu.print_cpp(f.fuse(res._gen_ir())))
+
+if __name__ == "__main__":
+    # test1()
+    # test2()
+    test3()
 

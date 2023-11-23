@@ -508,7 +508,7 @@ class TensorOp(Tensor):
 
         elif op_type in math_op:
             dtype = self.operators[0].dtype
-            ref_size = self.operators[0].ref_size
+            ref_size = self.operators[0]._size()
             fix_size = []
             if op_type == 'round':
                 dtype = 'int'

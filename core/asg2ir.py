@@ -178,38 +178,47 @@ def gen_ir(node):
             ir.append(Assignment(res, Expr(lhs, rhs, op)))
 
         elif node.op_type in math_op:
-            # TODO: add loop_ofs
             node.operators[0]._gen_ir()
-            node.input_orders[0] = []
+
             if len(node._size()) > 0:
                 size = get_ir_of_size(node._size())
                 node.eval = Ndarray(node.dtype, size)
-                node.decl = [Decl(node.eval)]
-                pre_loop = Loop(0, node.eval.size[0], 1, [])
-                node.compute = [pre_loop]
-                val = bind(node.operators[0].eval, pre_loop.iterate)
-                res = bind(node.eval, pre_loop.iterate)
-                for i in range(1, len(node.eval.size)):
-                    loop = Loop(0, node.eval.size[i], 1, [])
-                    pre_loop.body.append(loop)
-                    pre_loop = loop
-                    val = bind(val, pre_loop.iterate)
-                    res = bind(res, pre_loop.iterate)
-
-                assign = Assignment(res, Math(val, node.op_type))
-                pre_loop.body.append(assign)
-
             else:
+                size = []
                 node.eval = Scalar(node.dtype)
-                node.decl = [Decl(node.eval)]
-                node.compute = [Assignment(node.eval, Math(node.operators[0].eval, node.op_type))]
 
-            l = node.compute[0]
-            for i in range(len(node.eval.size)):
-                node.output_order.append((i, l))
-                l.attr['output_axis'] = i
-                node.input_orders[0].append((i, l))
-                l = l.body[0]
+            node.decl = [Decl(node.eval)]
+
+            res = node.eval
+            val = node.operators[0].eval
+            levels = len(size)
+            ir = node.compute
+
+            for level in range(levels):
+                slice = get_slice(val)
+                attr = {}
+                if slice != None and type(slice.start) == Literal:
+                    if slice.start.val < 0:
+                        ofs = -slice.start.val
+                        attr['slice_ofs'] = ofs
+                    else:
+                        ofs = 0
+                else:
+                    ofs = 0
+
+                pre_loop = Loop(0, size[level], 1, [])
+                if ofs > 0:
+                    pre_loop.attr['loop_ofs'] = ofs
+
+                val = bind(val, pre_loop.iterate, attr)
+                node.input_orders[0].append((level, pre_loop))
+                res = bind(res, pre_loop.iterate)
+                node.output_order.append((level, pre_loop))
+                pre_loop.attr['output_axis'] = level
+                ir.append(pre_loop)
+                ir = pre_loop.body
+
+            ir.append(Assignment(res, Math(val, node.op_type)))
 
         elif node.op_type == 'setval':
             if type(node.operators[0]) == Tensor:

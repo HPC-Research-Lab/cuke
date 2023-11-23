@@ -263,9 +263,9 @@ def test():
     # print(x)
 
 if __name__ == "__main__":
-    # transE() # success
-    # transH() # success
+    transE() # success
+    transH() # success
     # transR() # success
     # transF() # success
-    RESCAL() # success
+    # RESCAL() # success
     # test()

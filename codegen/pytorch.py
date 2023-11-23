@@ -6,6 +6,7 @@ from codegen.oob import lower_bound_padding
 from codegen.tensorize import tensorize
 from core.asg import *
 from core.ir import *
+import codegen
 
 
 indent_width = 4
