@@ -1,7 +1,7 @@
 from core.asg import *
 from core.ir import *
 import codegen
-from helpers import get_obj, get_val, ASGTraversal, rebind_iterate, IRTraversal, ir_defs, ir_uses
+from helpers import get_obj, get_val, ASGTraversal, rebind_iterate, IRTraversal, ir_defs, ir_uses, remove_decl, clear_compute, ir_find_defs
 
 
 
@@ -22,22 +22,24 @@ class fuser:
         return node
 
 
-def _find_defs(ir, data):
-    def action(stmt, res):
-        if type(stmt) == Assignment and get_obj(stmt.lhs) == data:
-            res.append(stmt)
-
-        return [True, True, True, True]
-
-    t = IRTraversal(action)
-    return t(ir)
 
 
+
+# TODO: reimplement this with IRTraversal
 def _replace_arrindex_with_scalar(ir, old, new):
     if type(ir) == list or type(ir) == tuple:
         for l in ir:
             _replace_arrindex_with_scalar(l, old, new)
     elif type(ir) == Loop:
+        _replace_arrindex_with_scalar(ir.body, old, new)
+    elif type(ir) == FilterLoop:
+        if type(ir.cond) in (Indexing, Scalar):
+            obj = get_obj(ir.cond)
+            if obj == old:
+                ir.cond = new
+        else:
+            _replace_arrindex_with_scalar(ir.cond, old, new)
+        _replace_arrindex_with_scalar(ir.cond_body, old, new)
         _replace_arrindex_with_scalar(ir.body, old, new)
     elif type(ir) == Expr:
         if type(ir.left) in (Indexing, Scalar):
@@ -94,6 +96,12 @@ def _replace_arrindex_with_scalar(ir, old, new):
                 ir.val = new
         else:
             _replace_arrindex_with_scalar(ir.val, old, new)
+    elif type(ir) == Code:
+        if type(ir.output[1]) in (Indexing, Scalar):
+            obj = get_obj(ir.output[1])
+            if obj == old:
+                ir.output = (ir.output[0], new)
+        # TODO: replace inputs
 
 def match_orders(order1, order2):
     if len(order1) == len(order2):
@@ -114,7 +122,7 @@ def match_orders(order1, order2):
     else:
         return False
 
-def merge_loops(order1, order2, data, astnode):
+def merge_loops(order1, order2, data, this_node, input_node):
     if match_orders(order1, order2):
         for i in range(len(order1)):
             nl = order1[i][1]
@@ -128,33 +136,47 @@ def merge_loops(order1, order2, data, astnode):
                 else:
                     nl.attr['loop_ofs'] = ol.attr['loop_ofs']
 
-        dfs = _find_defs(order2[-1][1].body, data)
-        if len(dfs) < 1:
-            return False
+        dfs = ir_find_defs(order2[-1][1].body, data)
+        if len(dfs) > 0:
+            if ir_uses(dfs[-1], data):
+                df = Scalar(data.dtype)
+                this_node.decl.append(Decl(df))
+            else:
+                df = dfs[-1].rhs
+                order2[-1][1].body = [s for s in order2[-1][1].body if not ir_defs(s, data)]
 
-        if ir_uses(dfs[-1], data):
-            df = Scalar(data.dtype)
-            astnode.decl.append(Decl(df))
+            if type(order1[-1][1]) == FilterLoop and data == get_obj(order1[-1][1].cond):
+                order1[-1][1].cond_body.extend(order2[-1][1].body)
+                _replace_arrindex_with_scalar(order1[-1][1], data, df)
+                clear_compute(input_node)
+                remove_decl(input_node, input_node.eval)
+            else:
+                j = len(order1[-1][1].body)
+                for i in range(len(order1[-1][1].body)):
+                    if ir_uses(order1[-1][1].body[i], data):
+                        j = i
+                        break
+                order1[-1][1].body[j:j] = order2[-1][1].body
+                _replace_arrindex_with_scalar(order1[-1][1].body, data, df)
+                clear_compute(input_node)
+                remove_decl(input_node, input_node.eval)
         else:
-            df = dfs[-1].rhs
-            order2[-1][1].body = [s for s in order2[-1][1].body if not ir_defs(s, data)]
-
-        j = len(order1[-1][1].body)
-        for i in range(len(order1[-1][1].body)):
-            if ir_uses(order1[-1][1].body[i], data):
-                j = i
-                break
-        order1[-1][1].body[j:j] = order2[-1][1].body
-
-        _replace_arrindex_with_scalar(order1[-1][1].body, data, df)
-        return True
-    return False
+            if type(order1[-1][1]) == FilterLoop and data == get_obj(order1[-1][1].cond):
+                order1[-1][1].cond_body.extend(order2[-1][1].body)
+                clear_compute(input_node)
+            else:
+                j = len(order1[-1][1].body)
+                for i in range(len(order1[-1][1].body)):
+                    if ir_uses(order1[-1][1].body[i], data):
+                        j = i
+                        break
+                order1[-1][1].body[j:j] = order2[-1][1].body
+                clear_compute(input_node)
 
 
 def fuse_operators(op1, order1, op2):
-    if merge_loops(order1, op2.output_order, op2.eval, op1):
-        op2.compute.clear()
-        op2.decl = [d for d in op2.decl if d.dobject != op2.eval]
+    merge_loops(order1, op2.output_order, op2.eval, op1, op2)
+
 
 def basic_rule(node, res):
     if type(node) == TensorOp and node.op_type in elementwise_op:
@@ -166,6 +188,13 @@ def basic_rule(node, res):
             if type(node.operators[1]) == TensorOp and len(node.operators[1].ref_by) == 1:
                 if node.operators[1].op_type in (elementwise_op + ['setval', 'apply', 'einsum']):
                    fuse_operators(node, node.input_orders[1], node.operators[1])
+
+    elif type(node) == TensorOp and node.op_type == 'apply':
+        cond = node.operators[2+2*node.nparams]
+        if cond != None:
+            this_loop = node.output_order[0]
+            fuse_operators(node, [this_loop], cond)
+
 
 
 def test1():

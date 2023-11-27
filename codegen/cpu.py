@@ -1,5 +1,5 @@
 from cset.ast2ir import *
-from helpers import collect_ir, get_input_nodes
+from helpers import collect_ir, get_input_nodes, ir_find_defs
 import random
 import string
 from codegen.oob import lower_bound_padding
@@ -31,21 +31,23 @@ def to_string(ir):
             code += "} \n"
             return code
         case 'FilterLoop':
-            code = f"for (int {to_string(ir.iterate)} = {to_string(ir.start)}; {to_string(ir.iterate)} < {to_string(ir.end)}; {to_string(ir.iterate)} += {to_string(ir.step)}) {{\n"
+            code = ''
+            if ir.attr['ptype'] == 'naive' and 'plevel' in ir.attr and 'nprocs' in ir.attr:
+                code += f"#pragma omp parallel for num_threads({ir.attr['nprocs'][ir.attr['plevel']][0]})\n"
+            code += f"for (int {to_string(ir.iterate)} = {to_string(ir.start)}; {to_string(ir.iterate)} < {to_string(ir.end)}; {to_string(ir.iterate)} += {to_string(ir.step)}) {{\n"
+            for e in ir.cond_body:
+                if e:
+                    code += to_string(e)
+            code += f"if ({to_string(ir.cond)}) {{\n"
             for e in ir.body:
                 if e:
                     code += to_string(e)
-            if ir.cond:
-                code += f"if({to_string(ir.cond)}){{\n"
-                for e in ir.cond_body:
-                    if e:
-                        code += to_string(e)
-                code += "} \n"
+            code += "} \n"
             code += "} \n"
             return code
         case 'Not':
             return f"!{to_string(ir.dobject)}"
-        case 'Scalar' | 'Ndarray' | 'Ref':
+        case 'Scalar' | 'Ndarray':
             return ir.name()
         case 'Literal':
             return str(ir.val)
@@ -83,8 +85,9 @@ def to_string(ir):
             return f"{ir.type}({to_string(ir.val)})"
         case 'Code':
             code = ir.code
-            for kw in ir.keywords:
-                code = code.replace(kw, to_string(ir.keywords[kw]))
+            code = code.replace(ir.output[0], to_string(ir.output[1]))
+            for kw in ir.inputs:
+                code = code.replace(kw, to_string(ir.inputs[kw]))
             return code + '\n'
         case _:
             return str(ir)
@@ -95,6 +98,18 @@ def print_cpp(asg):
     lower_bound_padding(asg)
 
     collect_ir(asg, ir)
+
+    # fix dynamic size allocation
+    for j in range(len(ir)):
+        d = ir[j]
+        if type(d) == Decl:
+            for i in range(len(d.dobject.size)):
+                if type(d.dobject.size[i]) == Scalar:
+                    assigns = ir_find_defs(ir[j+1:], d.dobject.size[i])
+                    if len(assigns) > 0:
+                        d.dobject.size[i] = Literal(4096, 'int')
+
+
     args = get_input_nodes(asg)
     args = ', '.join([f'torch::Tensor obj_{a}' if type(args[a]) == Tensor else f'{args[a].dtype} {a}' for a in args])
 

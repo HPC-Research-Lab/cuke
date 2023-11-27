@@ -1,6 +1,6 @@
 from core.asg import *
 from core.ir import *
-from helpers import get_ir_of_size, ASGTraversal, replace_all_ref, rebind_iterate
+from helpers import get_ir_of_size, ASGTraversal, replace_all_ref, rebind_iterate, remove_decl
 
 
 def num_unbind(index):
@@ -26,7 +26,7 @@ def get_first_unbind(index: (Indexing, Ndarray, Slice)):
     return None
 
 
-def bind(index: (Indexing, Ndarray, Slice), idx, attr = {}):
+def bind(index: (Indexing, Ndarray, Slice), idx, attr={}):
     x = get_first_unbind(index)
     if x == None:
         res = Indexing(index, idx)
@@ -79,6 +79,7 @@ def replace_output(ir, old, new):
 def has_same_iteration_space(l1, l2):
     return has_same_value(l1.start, l2.start) and has_same_value(l1.end, l2.end) and has_same_value(l1.step, l2.step)
 
+
 def gen_ir(node):
     assert isinstance(node, ASTNode)
     if node.eval or len(node.decl) > 0 or (type(node) == TensorOp and len(node.compute) > 0):
@@ -116,10 +117,10 @@ def gen_ir(node):
             else:
                 op = node.op_type
 
-            if len(node._size()) > 0: # if output has >=1 dimensions, it should be stored in an Ndarray
+            if len(node._size()) > 0:  # if output has >=1 dimensions, it should be stored in an Ndarray
                 size = get_ir_of_size(node._size())
                 node.eval = Ndarray(node.dtype, size)
-            else: # otherwise, it is a scalar
+            else:  # otherwise, it is a scalar
                 size = []
                 node.eval = Scalar(node.dtype)
             node.decl = [Decl(node.eval)]
@@ -228,8 +229,8 @@ def gen_ir(node):
             node.operators[1]._gen_ir()
 
             node.eval = node.operators[0].eval
-            node.operators[0].decl = [d for d in node.operators[0].decl if d.dobject != node.operators[0].eval]
-            node.decl.append(Decl(node.eval))
+            # remove_decl(node.operators[0], node.eval)
+            # node.decl.append(Decl(node.eval))
 
             if is_scalar(node.operators[1]):
                 val = node.operators[1].eval
@@ -291,7 +292,6 @@ def gen_ir(node):
                     all_loops.append(l)
                     node.input_orders[1].append((len(node.input_orders[1]), l))
 
-
             for i in all_indices:
                 if i in output:
                     continue
@@ -307,7 +307,6 @@ def gen_ir(node):
                     l = Loop(0, node.operators[1].eval.ref_size(pos2), 1, [])
                     all_loops.append(l)
                     node.input_orders[1].append((len(node.input_orders[1]), l))
-
 
             for i in all_indices:
                 pos1 = input1.find(i)
@@ -386,23 +385,30 @@ def gen_ir(node):
 
         elif node.op_type == 'apply':
             func = node.operators[0]
-            nparams = len(inspect.signature(func).parameters)
 
-            # generate IR for the input items of func
-            for i in range(1, 2+2*nparams):
+            # operators: func, data (node.nparams), axis (node.nparams), out_ofs, cond, items (node.nparams), ret
+            for i in range(1, 3 + 2 * node.nparams):
                 if node.operators[i] != None:
                     node.operators[i]._gen_ir()
 
-            primary_axis = node.operators[1+nparams].eval.val
+            primary_axis = node.operators[1 + node.nparams].eval.val
 
             # this is the loop that iterates over the axis of the primary (first) tensor input
-            outer_loop = Loop(0, node.operators[1].eval.size[primary_axis], 1, [])
+            cond = node.operators[2 + 2 * node.nparams]
+            if cond == None:
+                outer_loop = Loop(0, node.operators[1].eval.size[primary_axis], 1, [])
+            else:
+                outer_loop = FilterLoop(0, node.operators[1].eval.size[primary_axis], 1,
+                                        cond.eval, [], [])
+                # gen ir for the counter
+                node.operators[-1]._gen_ir()
+
 
             nn = []
-            for i in range(nparams):
-                item = node.operators[2+2*nparams+i]
-                item.eval = node.operators[1+i].eval
-                axis = node.operators[1+nparams+i].eval.val
+            for i in range(node.nparams):
+                item = node.operators[3 + 2 * node.nparams + i]
+                item.eval = node.operators[1 + i].eval
+                axis = node.operators[1 + node.nparams + i].eval.val
                 n = num_unbind(item.eval)
                 nn.append(n)
                 for i in range(n, axis):
@@ -413,13 +419,13 @@ def gen_ir(node):
                     item.eval = bind(item.eval, outer_loop.iterate)
 
             # since input items of func has been generated and indexed, we can generate the IR of the func
-            ret = node.operators[-1]
+            ret = node.operators[-2]
             ret._gen_ir()
 
             # get the input orders
-            for i in range(min(len(ret.input_orders), nparams)):
+            for i in range(min(len(ret.input_orders), node.nparams)):
                 n = nn[i]
-                l = node.input_orders[1+i]
+                l = node.input_orders[1 + i]
                 if axis >= n:
                     for j in range(axis):
                         l.append((len(l), ret.input_orders[i][j][1]))
@@ -431,10 +437,13 @@ def gen_ir(node):
                     for j in range(len(ret.input_orders[i])):
                         l.append((len(l), ret.input_orders[i][j][1]))
 
-            def action(node, res):
-                if isinstance(node, Tensor):
-                    res.extend(node.compute)
-                    node.compute.clear()
+            def action(n, res):
+                if isinstance(n, Tensor):
+                    for s in n.compute:
+                        s.attr['asgnode'] = n
+                    res.extend(n.compute)
+                    n.compute.clear()
+                    n.attr['scope'] = node
 
             t = ASGTraversal(action)
             ret_compute = t(ret)
@@ -450,31 +459,42 @@ def gen_ir(node):
             node.decl.append(Decl(node.eval))
             node.compute = [outer_loop]
 
-            out_ofs = node.operators[1 + 2*nparams]
+            out_ofs = node.operators[1 + 2 * node.nparams]
             res = bind(node.eval, outer_loop.iterate) if out_ofs == None else node.eval
             replace_all_ref(node.compute, ret.eval, res)
+            remove_decl(ret, ret.eval)
             # if there is an offset for output storage
             if out_ofs != None:
-                # the last statement in the func IR is always a Loop that writes the result to ret.eval (which has been replaced by res)
-                assert type(ret_compute[-1]) == Loop
+                assert type(ret_compute[-1]) in (Loop, Assignment)
                 l = ret_compute[-1]
                 while (type(l) == Loop):
                     l = l.body[-1]
                 # But the index to the node.eval in res is incorrect, we need to change it according to the offset
-                rebind_iterate(l.lhs, ret_compute[-1].iterate, Expr(Indexing(out_ofs.eval, outer_loop.iterate), ret_compute[-1].iterate, '+'))
+                rebind_iterate(l.lhs, ret_compute[-1].iterate,
+                               Expr(Indexing(out_ofs.eval, outer_loop.iterate), ret_compute[-1].iterate, '+'))
             # ret.eval is removed from the decl
             node.decl = [d for d in node.decl if d.dobject != ret.eval]
+
+            if cond != None:
+                counter = node.operators[-1].eval
+                outer_loop.body.append(Assignment(counter, 1, '+'))
+                assert type(ret_compute[-1]) in (Loop, Assignment)
+                l = ret_compute[-1]
+                while (type(l) == Loop):
+                    l = l.body[-1]
+                rebind_iterate(l.lhs, outer_loop.iterate, counter)
+
 
             node.output_order = [(0, outer_loop)]
             outer_loop.attr['output_axis'] = 0
             if hasattr(ret, 'output_order'):
                 for i in range(len(ret.output_order)):
-                    node.output_order.append((i+1, ret.output_order[i][1]))
+                    node.output_order.append((i + 1, ret.output_order[i][1]))
                     ret.output_order[i][1].attr['output_axis'] = i + 1
 
 
         elif node.op_type == 'reduce':
-            #TODO: add input_orders for reduce, and aggr
+            # TODO: add input_orders for reduce, and aggr
             node.operators[0]._gen_ir()  # input data
             node.operators[3]._gen_ir()  # axis
             axis = node.operators[3].eval.val
@@ -485,8 +505,7 @@ def gen_ir(node):
             else:
                 node.eval = Scalar(node.dtype)
 
-
-            node.operators[2]._gen_ir() # init
+            node.operators[2]._gen_ir()  # init
             # the decl of node.eval should be added to the init
             node.operators[2].decl.append(Decl(node.eval))
 
@@ -514,7 +533,8 @@ def gen_ir(node):
             compute.clear()
 
             # merge init into node.compute
-            init = node.operators[2].output_order[-1][1].body if len(node.operators[2].output_order) > 0 else node.operators[2].compute
+            init = node.operators[2].output_order[-1][1].body if len(node.operators[2].output_order) > 0 else \
+            node.operators[2].compute
             # assert len(node.operators[2].output_order) == len(ret.output_order)
             for i in range(len(node.operators[2].output_order)):
                 # assert has_same_iteration_space(node.operators[2].output_order[i][1], ret.output_order[i][1])
@@ -540,13 +560,13 @@ def gen_ir(node):
 
 
         elif node.op_type == 'aggr':
-            node.operators[0]._gen_ir() # input tensor
-            node.operators[3]._gen_ir() # indices
-            node.operators[4]._gen_ir() # axis
+            node.operators[0]._gen_ir()  # input tensor
+            node.operators[3]._gen_ir()  # indices
+            node.operators[4]._gen_ir()  # axis
             axis = node.operators[4].eval.val
             size = get_ir_of_size(node._size())
             node.eval = Ndarray(node.dtype, size)
-            node.operators[2]._gen_ir() # init
+            node.operators[2]._gen_ir()  # init
             node.operators[2].decl.append(Decl(node.eval))
 
             # compute
@@ -579,11 +599,28 @@ def gen_ir(node):
             replace_output(node.compute, ret.eval, item1.eval)
             node.decl = [d for d in node.decl if d.dobject != ret.eval]
 
-
             node.output_order = [(0, outer_loop)]
             for i in range(len(ret.output_order)):
-                node.output_order.append((i+1, ret.output_order[i][1]))
+                node.output_order.append((i + 1, ret.output_order[i][1]))
                 ret.output_order[i][1].attr['output_axis'] = i + 1
 
-    return node
+        elif node.op_type == 'inline':
+            src = node.operators[0]
+            keyvalue = []
+            for i in range(2, len(node.operators), 2):
+                node.operators[i]._gen_ir()
+                keyvalue.append((node.operators[i-1], node.operators[i].eval))
 
+            node.eval = node.operators[2].eval
+            # remove_decl(node.operators[2], node.eval)
+            # node.decl.append(Decl(node.eval))
+            node.compute = [Code(src, keyvalue[0], dict(keyvalue[1:]))]
+
+        elif node.op_type == 'getmember':
+            node.operators[0]._gen_ir()
+            member = getattr(node.operators[0], node.operators[1])
+            node.eval = member.eval
+
+
+
+    return node

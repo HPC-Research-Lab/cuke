@@ -37,20 +37,20 @@ class ASGTraversal:
             for c in node.operators:
                 self._post_traverse(c, visited, res)
             self.action(node, res)
-        elif type(node) == batch.ast.Batch:
-            self._post_traverse(node.base, visited, res)
-        elif type(node) == batch.ast.BatchOp:
-            for c in node.operators:
-                self._post_traverse(c, visited, res)
-            self.action(node, res)
-        elif type(node) == compression.asg.Encoder:
-            for s in node.fix_size:
-                self._post_traverse(s, visited, res)
-            for s in node.ref_size:
-                self._post_traverse(s, visited, res)
-            for c in node.operators:
-                self._post_traverse(c, visited, res)
-            self.action(node, res)
+        # elif type(node) == batch.ast.Batch:
+        #     self._post_traverse(node.base, visited, res)
+        # elif type(node) == batch.ast.BatchOp:
+        #     for c in node.operators:
+        #         self._post_traverse(c, visited, res)
+        #     self.action(node, res)
+        # elif type(node) == compression.asg.Encoder:
+        #     for s in node.fix_size:
+        #         self._post_traverse(s, visited, res)
+        #     for s in node.ref_size:
+        #         self._post_traverse(s, visited, res)
+        #     for c in node.operators:
+        #         self._post_traverse(c, visited, res)
+        #     self.action(node, res)
 
     def __call__(self, ast):
         visited = set()
@@ -88,9 +88,9 @@ def collect_ir(ast, ir):
 
 def new_op(func):
     def wrapper_func(*args, **kwargs):
-        res = func(*args, **kwargs)
-        res.attr[func.__name__] = True
-        return res
+        _res = func(*args, **kwargs)
+        _res.attr[func.__name__] = True
+        return _res
     return wrapper_func
 
 
@@ -120,7 +120,7 @@ class IRTraversal:
             if cond[0]:
                 for l in stmt:
                     self._preorder_traverse(l, res)
-        elif type(stmt) == Loop:
+        elif isinstance(stmt, Loop):
             cond = self.action(stmt, res)
             if cond[0]:
                 self._preorder_traverse(stmt.start, res)
@@ -130,6 +130,8 @@ class IRTraversal:
                 self._preorder_traverse(stmt.step, res)
             if cond[3]:
                 self._preorder_traverse(stmt.body, res)
+            if type(stmt) == FilterLoop and cond[4]:
+                self._preorder_traverse(stmt.cond, res)
         elif type(stmt) == Expr:
             cond = self.action(stmt, res)
             if cond[0]:
@@ -166,6 +168,13 @@ class IRTraversal:
             cond = self.action(stmt, res)
             if cond[0]:
                 self._preorder_traverse(stmt.val, res)
+        elif type(stmt) == Code:
+            cond = self.action(stmt, res)
+            if cond[0]:
+                self._preorder_traverse(stmt.output[1], res)
+            if cond[1]:
+                for k in stmt.inputs:
+                    self._preorder_traverse(stmt.inputs[k], res)
 
     def __call__(self, ir):
         res = []
@@ -187,6 +196,15 @@ def replace_all_ref(ir, old, new):
     def action(stmt, res):
         match stmt.__class__.__name__:
             case 'Loop':
+                if stmt.start == old:
+                    stmt.start = new
+                if stmt.end == old:
+                    stmt.end = new
+                if stmt.step == old:
+                    stmt.step = new
+            case 'FilterLoop':
+                if stmt.cond == old:
+                    stmt.cond = new
                 if stmt.start == old:
                     stmt.start = new
                 if stmt.end == old:
@@ -218,7 +236,13 @@ def replace_all_ref(ir, old, new):
             case 'Math':
                 if stmt.val == old:
                     stmt.val = new
-        return [True, True, True, True]
+            case 'Code':
+                if stmt.output[1] == old:
+                    stmt.output = (stmt.output[0], new)
+                for k in stmt.inputs:
+                    if stmt.inputs[k] == old:
+                        stmt.inputs[k] = new
+        return [True, True, True, True, True]
 
     t = IRTraversal(action)
     t(ir)
@@ -236,7 +260,7 @@ def ir_uses(ir, data):
             else:
                 return [False, True]
         else:
-            return [True, True, True, True]
+            return [True, True, True, True, True]
 
     t = IRTraversal(action)
     r = t(ir)
@@ -256,7 +280,7 @@ def ir_defs(ir, data):
         if type(stmt) == Assignment:
             return [True, False]
         else:
-            return [True, True, True, True]
+            return [True, True, True, True, True]
 
     t = IRTraversal(action)
     r = t(ir)
@@ -264,3 +288,56 @@ def ir_defs(ir, data):
         return True
     else:
         return False
+
+
+def remove_decl(node, item):
+    def action(n, res):
+        n.decl = [d for d in n.decl if d.dobject != item]
+    t = ASGTraversal(action)
+    t(node)
+
+
+def _remove_compute_of_node(loop, node):
+    body = []
+    for stmt in loop.body:
+        if not ('asgnode' in stmt.attr and stmt.attr['asgnode'] == node):
+            if type(stmt) == Loop:
+                _remove_compute_of_node(stmt, node)
+            body.append(stmt)
+    loop.body = body
+
+
+
+def clear_compute(node):
+    node.compute.clear()
+    if 'scope' in node.attr:
+        scope = node.attr['scope']
+        compute = []
+        for stmt in scope.compute:
+            if not ('asgnode' in stmt.attr and stmt.attr['asgnode'] == node):
+                if type(stmt) == Loop:
+                    _remove_compute_of_node(stmt, node)
+                compute.append(stmt)
+        scope.compute = compute
+
+
+def ir_find_defs(ir, data):
+    def action(stmt, res):
+        if type(stmt) == Assignment and get_obj(stmt.lhs) == data:
+            res.append(stmt)
+        elif type(stmt) == Code and get_obj(stmt.output[1]) == data:
+            res.append(stmt)
+
+        return [True, True, True, True, True]
+
+    t = IRTraversal(action)
+    return t(ir)
+
+
+def asg_find_defs(asg, data):
+    def action(node, res):
+        if type(node) == TensorOp:
+            res.extend(ir_find_defs(node.compute, data))
+
+    t = ASGTraversal(action)
+    return t(asg)

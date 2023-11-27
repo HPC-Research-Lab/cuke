@@ -564,6 +564,51 @@ def apply_test10():
     code = codegen.cpu.print_cpp(res._gen_ir())
     print(code)
 
+
+def apply_test11():
+    A = Tensor('A', (10, ))
+    res = A[:5].apply(lambda x:x)
+    code = codegen.cpu.print_cpp(res._gen_ir())
+    print(code)
+
+def cond_apply_test1():
+    d1 = Var('d1')
+    d2 = Var('d2')
+    A = Tensor('A', (d1, d2))
+    B = Tensor('B', (d1,))
+    ast = A.apply(lambda x: x + 1, cond=B)
+    ir = gen_ir(ast)
+
+    code = codegen.cpu.print_cpp(ir)
+    print(code)
+
+
+def cond_apply_test2():
+    d1 = Var('d1')
+    d2 = Var('d2')
+    A = Tensor('A', (d1, d2))
+    B = Tensor('B', (d2,))
+    ast = A.apply(lambda x: x + 1, axis=1, cond=B)
+    ir = gen_ir(ast)
+
+    code = codegen.cpu.print_cpp(ir)
+    print(code)
+
+
+def cond_apply_test3():
+    d1 = Var('d1')
+    d2 = Var('d2')
+    A = Tensor('A', (d1, d2))
+    B = Tensor('B', (d1,))
+    C = Tensor('C', (d1,))
+    cond = bigger(B + C.abs(), 0)
+    ast = A.apply(lambda x: x + 1, cond=cond)
+    ir = gen_ir(ast)
+    f = fuse.fuser()
+    f.register(fuse.basic_rule)
+    code = codegen.cpu.print_cpp(f.fuse(ir))
+    print(code)
+
 def test_aggr1():
     A = Tensor('A', (10, 20))
     indices = Tensor('idx', (A._size()[0], ), dtype='int')
@@ -971,9 +1016,13 @@ if __name__ == "__main__":
     # apply_test5()
     # apply_test6()
     # apply_test7()
-    apply_test8()
-    apply_test9()
+    # apply_test8()
+    # apply_test9()
     # apply_test10()
+    apply_test11()
+    # cond_apply_test1()
+    # cond_apply_test2()
+    # cond_apply_test3()
     # reduce_test1()
     # reduce_test2()
     # reduce_test3()

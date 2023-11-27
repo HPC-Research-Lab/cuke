@@ -2,10 +2,13 @@ class IR:
     def __init__(self):
         self.attr = {}
 
+
 class Code(IR):
-    def __init__(self, code, keywords: dict):
+    def __init__(self, code: str, output, inputs: dict):
+        super().__init__()
         self.code = code
-        self.keywords = keywords
+        self.output = output
+        self.inputs = inputs
 
 
 class DObject(IR):
@@ -31,14 +34,12 @@ class Expr(IR):
         self.size = self.left.size
 
 
-
 class Assignment(IR):
     def __init__(self, lhs, rhs, op=None):
         super().__init__()
         self.lhs = lhs
         self.rhs = rhs
         self.op = op
-
 
 
 class Loop(IR):
@@ -57,11 +58,20 @@ class Loop(IR):
         self.attr['ptype'] = ptype
         self.iterate.attr['loop'] = self
 
+
+class FilterLoop(Loop):
+    def __init__(self, start, end, step, cond, cond_body: list, body: list, ptype='naive'):
+        super().__init__(start, end, step, body, ptype)
+        self.cond = Indexing(cond, self.iterate)
+        self.cond_body = cond_body
+
+
 class Scalar(DObject):
-    def __init__(self, dtype: str, name: str = None, is_arg = False):
+    def __init__(self, dtype: str, name: str = None, is_arg=False):
         super().__init__(dtype, [])
         self.__name__ = name if name else f's{self.dobject_id}'
         self.is_arg = is_arg
+
     def name(self):
         return self.__name__
 
@@ -79,11 +89,14 @@ class Slice(IR):
         self.stop = stop
         self.step = step
         self.dtype = 'int'
-        self.size = [Expr(Expr(self.stop, self.start, '-'), self.step, '/')]
+        if self.step == 1 or (type(self.step) == Literal and self.step.val == 1):
+            self.size = [Expr(self.stop, self.start, '-')]
+        else:
+            self.size = [Expr(Expr(self.stop, self.start, '-'), self.step, '/')]
 
 
 class Ndarray(DObject):
-    def __init__(self, dtype: str, size: tuple, name: str = None, is_arg = False):
+    def __init__(self, dtype: str, size: tuple, name: str = None, is_arg=False):
         super().__init__(dtype, size)
         self.__name__ = name if name else f'arr{self.dobject_id}'
         self.is_arg = is_arg
@@ -99,6 +112,7 @@ class Math(IR):
     def __init__(self, val, type):
         self.val = val
         self.type = type
+
 
 class Indexing(DObject):
     def __init__(self, dobject, idx):
@@ -119,13 +133,13 @@ class Indexing(DObject):
                 self.ref_point = len(idx.size)
         else:
             # dobject is an Indexing
-            size = dobject.size[:dobject.ref_point] + idx.size + dobject.size[dobject.ref_point+1:]
+            size = dobject.size[:dobject.ref_point] + idx.size + dobject.size[dobject.ref_point + 1:]
             self.ref_point = dobject.ref_point + len(idx.size)
 
         super().__init__(dobject.dtype, size)
 
     def ref_size(self, axis):
-        return self.size[axis+self.ref_point]
+        return self.size[axis + self.ref_point]
 
 
 class Decl(IR):
