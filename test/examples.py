@@ -12,7 +12,7 @@ def test1():
         return A + B - 1
 
     ast = func()
-    code = codegen.cpu.print_cpp(*fuse.fuse(ast._gen_ir()))
+    code = codegen.cpu.print_cpp(ast._gen_ir())
     print(code)
 
     A = torch.rand(10, 20)
@@ -298,7 +298,7 @@ def test15():
     print(helpers.get_input_nodes(ast))
     ir = gen_ir(ast)
 
-    code = codegen.cpu.print_cpp(fuse.fuse(ir))
+    code = codegen.cpu.print_cpp(ir)
     print(code)
 
 
@@ -335,9 +335,9 @@ def test17():
     B = torch.rand(100, 20)
     d = run.cpu.compile_and_run(code, A, B)
 
-    print(A[1:10][:, 2:4] + B[1:10][:, 2:4])
+    print(A[1:10][2:4] + B[1:10][2:4])
     print(d)
-    print(torch.equal(A[1:10][:, 2:4] + B[1:10][:, 2:4], d))
+    print(torch.equal(A[1:10][2:4] + B[1:10][2:4], d))
 
 
 def test18():
@@ -1001,8 +1001,8 @@ if __name__ == "__main__":
     # some slicing test
     # test15()
     # test16()
-    # test17()
-    # test18()
+    test17()
+    test18()
     # test19()
     # test20()
     # test21()
@@ -1019,7 +1019,7 @@ if __name__ == "__main__":
     # apply_test8()
     # apply_test9()
     # apply_test10()
-    apply_test11()
+    # apply_test11()
     # cond_apply_test1()
     # cond_apply_test2()
     # cond_apply_test3()

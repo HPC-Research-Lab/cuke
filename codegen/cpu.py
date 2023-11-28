@@ -4,6 +4,7 @@ import random
 import string
 from codegen.oob import lower_bound_padding
 import os
+from transform.fuse import fuser, basic_rule
 
 
 def to_string(ir):
@@ -96,6 +97,11 @@ def to_string(ir):
 
 
 def print_cpp(asg):
+
+    fu = fuser()
+    fu.register(basic_rule)
+    asg = fu.fuse(asg)
+
     ir = []
     lower_bound_padding(asg)
 

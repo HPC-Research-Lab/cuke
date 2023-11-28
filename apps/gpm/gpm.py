@@ -26,10 +26,8 @@ def is_in(x, li):
     return inline(src, ('F', found), ('X', x), ('LI', li), ('LSIZE', li._size()[0]))
 
 def intersect(a: Set, b: Set):
-    sa = a.to_tensor()
-    sb = b.to_tensor()
-    c = sa.apply(lambda x: is_in(x, sb))
-    return Set(sa.apply(lambda x: x, cond=c))
+    c = a.apply(lambda x: is_in(x, b))
+    return Set(a.apply(lambda x: x, cond=c))
 
 
 class Graph:
@@ -47,9 +45,6 @@ def test1():
     B = Set(Tensor('B', (20, )))
     res = intersect(A, B)
     ir = res._gen_ir()
-    f = transform.fuse.fuser()
-    f.register(transform.fuse.basic_rule)
-    ir = f.fuse(ir)
     code = codegen.cpu.print_cpp(ir)
     print(code)
 
@@ -61,9 +56,6 @@ def test2():
     C = Set(Tensor('C', (30, )))
     res = intersect(intersect(A, B), C)
     ir = res._gen_ir()
-    # f = transform.fuse.fuser()
-    # f.register(transform.fuse.basic_rule)
-    # ir = f.fuse(ir)
     code = codegen.cpu.print_cpp(ir)
     print(code)
 
@@ -80,15 +72,12 @@ def test3():
     res = edges.apply(f)
     res = res.sum()
     ir = res._gen_ir()
-    f = transform.fuse.fuser()
-    f.register(transform.fuse.basic_rule)
-    ir = f.fuse(ir)
     code = codegen.cpu.print_cpp(ir)
     print(code)
 
 
 
 if __name__ == "__main__":
-    # test1()
+    test1()
     # test2()
-    test3()
+    # test3()

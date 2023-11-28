@@ -378,8 +378,24 @@ def gen_ir(node):
             node.operators[1]._gen_ir()
             if type(node.operators[1].eval) in (Scalar, Literal, Indexing):
                 node.eval = Indexing(node.operators[0].eval, node.operators[1].eval)
-            elif type(node.operators[1].eval) in (Ndarray, Slice):
+            elif type(node.operators[1].eval) == Ndarray:
                 node.eval = Indexing(node.operators[0].eval, Indexing(node.operators[1].eval, Literal(-1, 'int')))
+            elif type(node.operators[1].eval) == Slice:
+                if node.full_range == True:
+                    node.eval = Indexing(node.operators[0].eval, Indexing(node.operators[1].eval, Literal(-1, 'int')))
+                else:
+                    if type(node.operators[0].eval) == Indexing and type(node.operators[0].eval.idx) == Indexing and type(node.operators[0].eval.idx.dobject) == Slice:
+                        x1 = node.operators[0].eval.idx.dobject
+                        x2 = node.operators[1].eval
+                        start = Expr(x1.start, Expr(x2.start, x1.step, '*'), '+')
+                        step = Expr(x1.step, x2.step, '*')
+                        stop = Expr(x1.start, Expr(x1.step, x2.stop, '*'), '+')
+                        x1.start = start
+                        x1.step = step
+                        x1.stop = stop
+                        node.eval = node.operators[0].eval
+                    else:
+                        node.eval = Indexing(node.operators[0].eval, Indexing(node.operators[1].eval, Literal(-1, 'int')))
             else:
                 raise TypeError('incorrect index type!')
 

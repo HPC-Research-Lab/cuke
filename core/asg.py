@@ -411,17 +411,21 @@ class TensorOp(Tensor):
             if type(self.operators[1]) == int:
                 self.operators[1] = Const(self.operators[1], 'int')
             elif type(self.operators[1]) == slice:
+                self.full_range = True
                 start = self.operators[1].start
+                self.full_range &= (start == None)
                 if start == None:
                     start = Const(0, 'int')
                 elif type(start) == int:
                     start = Const(start, 'int')
                 stop = self.operators[1].stop
+                self.full_range &= (stop == None)
                 if stop == None:
                     stop = self.operators[0].ref_size[0]
                 elif type(stop) == int:
                     stop = Const(stop, 'int')
                 step = self.operators[1].step
+                self.full_range &= (step == None)
                 if step == None:
                     step = Const(1, 'int')
                 elif type(step) == int:
@@ -432,13 +436,17 @@ class TensorOp(Tensor):
                     csize = eval_const_expr(stop - start)
                 else:
                     csize = eval_const_expr((stop - start) // step)
-                if csize != None:
+                if csize == None:
+                    if step.val == 1:
+                        csize = stop - start
+                    else:
+                        csize = (stop - start) // step
+
+                if self.full_range:
                     fix_size.append(csize)
                 else:
-                    if step.val == 1:
-                        fix_size.append(stop - start)
-                    else:
-                        fix_size.append((stop - start) // step)
+                    ref_size.insert(0, csize)
+
             elif is_int_var(self.operators[1]):
                 self.operators[1] = self.operators[1]
             elif is_1dint_tensor(self.operators[1]):
