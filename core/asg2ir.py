@@ -383,6 +383,7 @@ def gen_ir(node):
             else:
                 raise TypeError('incorrect index type!')
 
+
         elif node.op_type == 'apply':
             func = node.operators[0]
 

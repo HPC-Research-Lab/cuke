@@ -1,5 +1,5 @@
 from cset.ast2ir import *
-from helpers import collect_ir, get_input_nodes, ir_find_defs
+from helpers import collect_ir, get_input_nodes, ir_find_defs, remove_defchain
 import random
 import string
 from codegen.oob import lower_bound_padding
@@ -7,6 +7,8 @@ import os
 
 
 def to_string(ir):
+    # if isinstance(ir, IR) and 'invalid' in ir.attr:
+    #     return ''
     match ir.__class__.__name__:
         case 'Expr':
             if ir.op in arith_op.values():
@@ -108,6 +110,9 @@ def print_cpp(asg):
                     assigns = ir_find_defs(ir[j+1:], d.dobject.size[i])
                     if len(assigns) > 0:
                         d.dobject.size[i] = Literal(4096, 'int')
+                        # remove_defchain(ir, assigns)
+
+
 
 
     args = get_input_nodes(asg)

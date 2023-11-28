@@ -4,7 +4,7 @@ from core.asg import *
 from helpers import new_op
 
 
-class Set:
+class Set(Tensor):
     def __init__(self, storage):
         self.storage = storage
         if hasattr(storage, 'counter'):
@@ -13,11 +13,6 @@ class Set:
             self.length = storage._size()[0]
         self.attr = self.storage.attr
 
-    def to_tensor(self):
-        storage = copy.copy(self.storage)
-        storage.ref_size = self.storage._size()
-        storage.fix_size = []
-        return storage[:self.length]
 
     def _gen_ir(self):
         return self.length._gen_ir()
@@ -66,9 +61,9 @@ def test2():
     C = Set(Tensor('C', (30, )))
     res = intersect(intersect(A, B), C)
     ir = res._gen_ir()
-    f = transform.fuse.fuser()
-    f.register(transform.fuse.basic_rule)
-    ir = f.fuse(ir)
+    # f = transform.fuse.fuser()
+    # f.register(transform.fuse.basic_rule)
+    # ir = f.fuse(ir)
     code = codegen.cpu.print_cpp(ir)
     print(code)
 

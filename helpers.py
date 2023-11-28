@@ -131,7 +131,7 @@ class IRTraversal:
             if cond[3]:
                 self._preorder_traverse(stmt.body, res)
             if type(stmt) == FilterLoop and cond[4]:
-                self._preorder_traverse(stmt.cond, res)
+                self._preorder_traverse(stmt.cond_body, res)
         elif type(stmt) == Expr:
             cond = self.action(stmt, res)
             if cond[0]:
@@ -247,8 +247,10 @@ def replace_all_ref(ir, old, new):
     t = IRTraversal(action)
     t(ir)
 
-def ir_uses(ir, data):
+def ir_uses(ir, data, avoid = []):
     def action(stmt, res):
+        if stmt in avoid:
+            return [False, False, False, False, False]
         if stmt == data or (isinstance(stmt, DObject) and stmt.dobject_id == data.dobject_id):
             if len(res) == 0:
                 res.append(True)
@@ -341,3 +343,58 @@ def asg_find_defs(asg, data):
 
     t = ASGTraversal(action)
     return t(asg)
+
+
+def get_vars(ir):
+    def action(stmt, res):
+        if type(stmt) in (Scalar, Ndarray):
+            res.append(stmt)
+
+        return [True, True, True, True, True]
+
+    t = IRTraversal(action)
+    return t(ir)
+
+
+def ir_find_uses(ir, data):
+    def action(stmt, res):
+        if type(stmt) == Assignment and data in get_vars(stmt.rhs):
+            res.append(stmt)
+        elif type(stmt) == Code:
+            uses = False
+            for x in stmt.inputs:
+                if stmt.inputs[x] == data:
+                    uses = True
+                    break
+            if uses:
+                res.append(stmt)
+
+        return [True, True, True, True, True]
+
+    t = IRTraversal(action)
+    return t(ir)
+
+
+def remove_defchain(ir, stmts):
+
+    all_removed = []
+    def _remove_assigns(ir, assigns):
+        to_remove = []
+
+        for s in assigns:
+            if type(s) == Assignment:
+                uses = ir_uses(ir, get_obj(s.lhs), all_removed)
+                if not uses:
+                    s.attr['invalid'] = True
+                    all_removed.append(s)
+                    use_vars = get_vars(s.rhs)
+                    for v in use_vars:
+                        to_remove.extend(ir_find_defs(ir, v))
+        if len(to_remove) > 0:
+            _remove_assigns(ir, to_remove)
+
+    _remove_assigns(ir, stmts)
+
+
+
+
