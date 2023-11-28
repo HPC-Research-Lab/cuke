@@ -1,401 +1,264 @@
+import sys
+
 from cset.ast import *
 from cset.ir import *
 from core.asg2ir import *
 import helpers
+import codegen
 
-# if input_fun:
-#     # outer_loop.body.extend([Assignment(ret.eval, 0)])
-#     # 
-
-# else:
-#     func_ret = input_set
-#     # node.operators.append(func_ret)
-#     node.eval = node.storage.eval
-#     node.storage.ref_size = [node.storage._size()[0]] 
-#     node.nelem[0].eval = input_set.nelem[0].eval
-#     node.nelem = node.storage.ref_size 
-#     node.storage._gen_ir()
-#     node.eval = node.storage.eval
-#     func_ret.eval = input_set.eval
-
-
-# if input_cond:
-#     cond_ret, cond_ret_decl, cond_ret_compute = _extend_ast(input_cond, item)
-#     outer_loop.cond = cond_ret.eval
-
-#     res_size = Scalar('int', 'nelem'+node.name, val=0)
-    
-#     assignment = Assignment(IndexOffset(node.eval, res_size), func_ret.eval)
-#     res_add_one = Assignment(res_size, 1, '+')
-#     outer_loop.cond_body.extend([assignment, res_add_one])
-
-#     outer_loop.condition = cond_ret.eval
-#     outer_loop.body.extend(cond_ret_compute)
-#     node.decl.extend(cond_ret_decl)
-# else:
-
-def ExtractTensorIR(ret):
-    def action(node, res):
-        if type(node) == Var or type(node) == One or type(node) == Zero or type(node) == Ones or type(node) == Zeros or type(node) == Tensor:
-            res.extend(node.decl)
-            # node.decl.clear()
-        elif type(node) == TensorOp:
-            res.extend(node.decl)
-            res.extend(node.compute)
-            # node.decl.clear()
-            # node.compute.clear()
-
-    t = helpers.ASGTraversal(action)
-    ret_ir = t(ret)
-    return ret_ir
-
-def bind2(arr: (Ndarray, Indexing), index, fix_ref=False):
-    # fix_ref == True means index at current position instead of the first unbind
-    if type(arr) == Ndarray or index == None or fix_ref:
-        return Indexing(arr, idx=index)
-    else:
-        ref_chain = [arr]
-        while (type(ref_chain[-1].dobject) != Ndarray):
-            ref_chain.append(ref_chain[-1].dobject)
-        for ref in ref_chain[::-1]:
-            if ref.index == None:
-                ref.index = index
-                return arr
-        return Indexing(arr, idx=index)
-
-def RefBind(arr: Ref, index):
-    if type(arr) == Ref:
-        return Index(arr, idx=index)
-
-def IndexOffset(arr, index):
-    if type(arr) == Ndarray:
-        return Indexing(arr, idx=index)
-    elif type(arr) == Indexing:
-        if type(arr.idx) == Indexing:
-            if type(arr.idx.dobject) == Slice:
-               arr.idx.idx = index
+def get_first_unbind(index: (Indexing, Ndarray, Slice)):
+    if type(index) == Indexing:
+        x = get_first_unbind(index.dobject)
+        if x != None:
+            return x
         else:
-             arr.idx = Expr(arr.idx, idx, '+')
-        return arr
+            if type(index.idx) == Literal and index.idx.val == -1:
+                return index
+            else:
+                y = get_first_unbind(index.idx)
+                return y
+    return None
 
-def _extend_ast(callback_func, item):
-    ret = callback_func(item)
+
+def bind(index: (Indexing, Ndarray, Slice), idx, attr = {}):
+    x = get_first_unbind(index)
+    if x == None:
+        res = Indexing(index, idx)
+        res.attr.update(attr)
+        return res
+    else:
+        old = copy.copy(x.idx)
+        old_attr = copy.copy(x.attr)
+        x.idx = idx
+        x.attr.update(attr)
+        new_index = copy.deepcopy(index)
+        x.idx = old
+        x.attr = old_attr
+        return new_index
+
+def _gen_and_detach_ir(ret):
     ret._gen_ir()
 
     def action(node, res):
-        if node.valid == True:
-            if type(node) == Var or type(node) == One or type(node) == Zero or type(node) == Ones or type(node) == Zeros or type(node) == Tensor:
-                res.extend(node.decl)
-                node.valid = False
-            elif type(node) == TensorOp:
-                res.extend(node.decl)
-                res.extend(node.compute)
-                node.valid = False
-            elif type(node) == Set:
-                res.extend(node.decl)
-                node.valid = False
-            elif type(node) == SetOp:
-                res.extend(node.decl)
-                res.extend(node.compute)
-                node.valid = False
+        if isinstance(node, Tensor):
+            res.extend(node.compute)
+            node.compute.clear()
+        elif isinstance(node, Set):
+            res.extend(node.compute)
+            node.compute.clear()
 
     t = helpers.ASGTraversal(action)
-    ret_ir = t(ret)
-    ret_decl = []
-    ret_compute = []
-
-    for ir in ret_ir:
-        if type(ir) == Decl:                       
-            ret_decl.extend([ir])
-        else:
-            ret_compute.extend([ir])
-    return ret, ret_decl, ret_compute
+    ret_compute = t(ret)
+    return ret_compute
 
 def gen_ir(node):
     if type(node) == Set:
-        helpers.get_ir_of_size(node.nelem)
+        node.nelem._gen_ir()
         node.storage._gen_ir()
+        helpers.get_ir_of_size(node.storage._size())
         node.eval = node.storage.eval
+        if len(node._tensor_size())>0:
+            node.compute = [Assignment(node.nelem.eval, node._tensor_size()[0].eval)]
 
     elif type(node) == SetOp:        
         if node.op_type == 'apply':
             input_set = node.operators[0]
-            input_func = node.operators[1]
-            input_cond = node.operators[2]
-            input_axis = node.operators[3]
-            input_decl_ret = node.operators[4]
-            item = node.operators[5]
-            
+            input_func_ast = node.operators[1]
+            input_init_ast = node.operators[2]
+            item = node.operators[3]
+
             input_set._gen_ir()
-            input_axis._gen_ir()
-
+            if input_init_ast!=None:
+                input_init_ast._gen_ir()
+            node.storage._gen_ir()
+            node.nelem._gen_ir()
+            node.eval = node.storage.eval
             
-            if input_func and input_cond:
-                pass
+            outer_loop = Loop(0, input_set.nelem.eval, 1, [])
+            item.eval = bind(input_set.eval, outer_loop.iterate)
 
-            elif not input_func and input_cond:
+            func_compute = _gen_and_detach_ir(input_func_ast)
+            outer_loop.body.extend(func_compute)
+            
+            node.compute.extend([outer_loop])
 
-                outer_loop = FilterLoop(0, input_set.nelem[input_axis.eval.val].eval, 1, [], None, [])
-
-                item.eval = input_set.eval
-                # for i in range(input_axis.eval.val):
-                #     item.eval = IndexOffset(item.eval, 0)
-                item.eval = IndexOffset(item.eval,  outer_loop.iterate)
-                
-                node.storage._gen_ir()
-                node.eval = node.storage.eval
-
-                cond_ret, cond_ret_decl, cond_ret_compute = _extend_ast(input_cond, item)
-
-                node.operators.append(cond_ret)
-
-                outer_loop.body.extend(cond_ret_compute)
-                outer_loop.cond = cond_ret.eval
-
-                res_size = Scalar('int', 'nelem_'+node.name, val=0)
-                assignment = Assignment(IndexOffset(node.eval, res_size), item.eval)
-                res_add_one = Assignment(res_size, 1, '+')
-                outer_loop.cond_body.extend([assignment, res_add_one])
-
-                node.decl.extend(cond_ret_decl)
-                node.decl.extend([Decl(res_size)])  
-                node.compute = [Assignment(res_size, 0), outer_loop]
-
-                node.storage.ref_size = [node.storage._size()[0]] + cond_ret._size()
-                node.storage.fix_size = []
-                node.nelem = [input_set.nelem[0]] + cond_ret._size()
-                input_set.nelem[0].eval = res_size
-
-            elif input_func and not input_cond:
-                outer_loop = Loop(0, input_set.nelem[input_axis.eval.val].eval, 1, [])
-
-                item.eval = input_set.eval
-                # for i in range(input_axis.eval.val):
-                #     item.eval = IndexOffset(item.eval, 0)
-                item.eval = IndexOffset(item.eval,  outer_loop.iterate)
-
-                func_ret, func_decl, func_compute = _extend_ast(input_func, item)
-
-                node.dtype = func_ret.dtype
-                node.operators.append(func_ret)
-                
-                node.storage.ref_size = [node.storage._size()[0]] + func_ret._size()
-                node.storage.fix_size = []
-                node.nelem = [input_set.nelem[0]] + func_ret._size()
-                
-                node.storage._gen_ir()
-
-                outer_loop.body.extend(func_compute)
-
-                node.eval = node.storage.eval
-
-                if input_decl_ret:
-                    node.decl.extend([Decl(node.eval)])
-                    # TODO: instead of copying output to node.eval, we can replace the lhs of assignment in ret_compute
-                    outer_loop.body.extend([Assignment(bind2(node.eval , outer_loop.iterate), func_ret.eval)])
-                else:
-                    node.storage.decl.clear()
-                
-                node.decl.extend(func_decl)
-                node.compute = [outer_loop]
+            #Clear declaration of the result Set&Tensor
+            node.storage.decl.clear()
         
-        elif node.op_type == 'search':
+        elif node.op_type== 'filter':
+            input_set = node.operators[0]
+            input_cond_ast = node.operators[1]
+            item = node.operators[2]
+            input_set._gen_ir()
+            node.storage._gen_ir()
+            node.nelem._gen_ir()
+            node.eval = node.storage.eval
+            res_size_ir = node.nelem.eval
+
+            outer_loop = FilterLoop(0, input_set.nelem.eval, 1, [], None, [])
+            item.eval = bind(input_set.eval,  outer_loop.iterate)
+
+            cond_compute = _gen_and_detach_ir(input_cond_ast)
+            outer_loop.body.extend(cond_compute)
+            outer_loop.cond = input_cond_ast.eval
+
+            lhs = bind(node.eval, res_size_ir) 
+            rhs = item.eval
+            res_init = Assignment(res_size_ir, 0)
+            res_plus = Assignment(res_size_ir, 1, '+')
+            if len(input_set._tensor_size())>1:
+                pre_loop = None
+                for i in range(1, len(input_set._tensor_size())):
+                    loop = Loop(0, input_set._tensor_size()[i].eval, 1, [])
+                    if pre_loop!=None:
+                        pre_loop.body.append(loop)
+                    pre_loop=loop
+                    lhs = bind(lhs, pre_loop.iterate)
+                    rhs = bind(rhs, pre_loop.iterate)
+                pre_loop.body.append(Assignment(lhs, rhs))
+                outer_loop.cond_body.extend([pre_loop, res_plus])
+            else:
+                outer_loop.cond_body.extend([Assignment(lhs, rhs), res_plus])
+
+            node.compute = [res_init, outer_loop]
+        
+        elif node.op_type == 'binary_search':
+            item = node.operators[0]
+            item._gen_ir()
+            input_set = node.operators[1]
+            input_set._gen_ir()
+            negative = node.operators[2]
+            
+            node.eval = Scalar(node.dtype)
+            node.decl = [Decl(node.eval)]
+            if negative.val:
+                node.compute = [Assignment(node.eval,  Not(BinarySearch(bind(input_set.eval, 0), 0, input_set.nelem.eval, item.eval)))]
+            else:
+                node.compute = [Assignment(node.eval,  BinarySearch(bind(input_set.eval, 0), 0, input_set.nelem.eval, item.eval))]
+       
+        elif node.op_type == 'merge_search':
             input_set = node.operators[0]
             input_set._gen_ir()
             item = node.operators[1]
             item._gen_ir()
-            search_start = 0
-            search_end = input_set.nelem[0].eval
-
-            node.eval = Scalar(node.dtype, node.name)
-            node.decl = [Decl(node.eval)]
-            node.compute = [Assignment(node.eval,  Search(IndexOffset(input_set.eval, 0), search_start, search_end, item.eval))]
-        
-        elif node.op_type == 'difference':
-            input_set = node.operators[0]
-            input_set._gen_ir()
-            item = node.operators[1]
-            item._gen_ir()
-            search_start = 0
-            search_end = input_set.nelem[0].eval
-
-            node.eval = Scalar(node.dtype, node.name)
-            node.decl = [Decl(node.eval)]
-            node.compute = [Assignment(node.eval,  Not(Search(IndexOffset(input_set.eval, 0), search_start, search_end, item.eval)))]
         
         elif node.op_type == 'smaller':
-            val = node.operators[0]
-            item = node.operators[1]
+            val = node.operators[1]
+            item = node.operators[0]
             val._gen_ir()
             item._gen_ir()
 
-            node.eval = Scalar(node.dtype, node.name)
+            node.eval = Scalar(node.dtype)
             node.decl = [Decl(node.eval)]
-            node.compute = [Assignment(node.eval ,Expr(Expr(val.eval, item.eval, '-'), 0, '>'))]
+            node.compute = [Assignment(node.eval ,Expr(Expr(val.eval, item.eval, '-'), 0, 'bigger'))]
+            # node.compute = [Assignment(node.eval ,0)]
         
-        elif node.op_type == 'addone':
-            node.operators[0]._gen_ir()
-            node.eval = node.operators[0].storage.eval
-            node.compute = [Assignment(node.eval, 1, '+')]
-
-        elif node.op_type == 'nelem':
+        elif node.op_type == 'increment':
             input_set = node.operators[0]
+            val =  node.operators[1]
+            assert(type(input_set.storage)==Var)
             input_set._gen_ir()
-            node.eval = input_set.nelem[0].eval 
+            val._gen_ir()
 
-        elif node.op_type == 'sum':
-            input_set = node.operators[0]
-            input_storage = input_set.storage
-            input_set._gen_ir()
-            
-            node.eval = Scalar(node.dtype, node.name, val=0)
-            node.decl = [Decl(node.eval)]
-
-            sum_loop = Loop(0, input_set.nelem[0].eval, 1, [])
-            sum_loop.body.append(Assignment(node.eval, bind2(input_storage.eval, sum_loop.iterate), '+'))
-
-            node.compute.extend([sum_loop])
+            node.eval = input_set.storage.eval
+            node.compute = [Assignment(node.eval, val.eval, '+')]
         
-        elif node.op_type == 'ret_val':
-            program_body =  node.operators[0]
-            program_body._gen_ir()
+        elif node.op_type == 'retval':
+            input_set =  node.operators[0]
+            input_set._gen_ir()
             ret_val =  node.operators[1]
             ret_val._gen_ir()
             node.eval = ret_val.eval
-
-        # elif node.op_type == 'filter':
-        #     input_set = node.operators[0]
-        #     input_set._gen_ir()
-
-        #     node.storage._gen_ir()
-        #     node.eval = node.storage.eval
-            
-        #     cond_obj = node.operators[1]
-        #     item = node.operators[2]
-
-        #     ret = cond_obj(item)
-            
-        #     #把filter_loop的类型改成FilterLoop
-        #     filter_loop = Loop(0, input_set.nelem.eval, 1, [])
-        #     item.eval = IndexOffset(input_set.eval, filter_loop.iterate)
-
-        #     ret._gen_ir()
-
-        #     def action(node, res):
-        #         if type(node) == Var or type(node) == One or type(node) == Zero or type(node) == Ones or type(node) == Zeros or type(node) == Tensor:
-        #             res.extend(node.decl)
-        #             node.decl.clear()
-        #         elif type(node) == TensorOp:
-        #             res.extend(node.decl)
-        #             res.extend(node.compute)
-        #             node.decl.clear()
-        #             node.compute.clear()
-        #         elif type(node) == Set:
-        #             res.extend(node.decl)
-        #             node.decl.clear()
-        #         elif type(node) == SetOp:
-        #             res.extend(node.decl)
-        #             res.extend(node.compute)
-        #             node.decl.clear()
-        #             node.compute.clear()
-
-        #     t = helpers.Traversal(action)
-        #     ret_ir = t(ret)
-        #     ret_decl = []
-        #     ret_compute = []
-
-        #     for ir in ret_ir:
-        #         if type(ir) == Decl:                       
-        #             ret_decl.extend([ir])
-        #         else:
-        #             ret_compute.extend([ir])
-        #     node.operators.append(ret)
-
-        #     filter_loop.body.extend(ret_compute)
-
-        #     cond_ir = Condition(ret.eval, [])
-        #     res_size = Scalar('int', 'nelem'+node.name, val=0)
-        #     assignment = Assignment(IndexOffset(node.eval, res_size), item.eval)
-        #     res_add_one = Assignment(res_size, 1, '+')
-        #     cond_ir.body.extend([assignment, res_add_one])
-            
-        #     filter_loop.body.extend([cond_ir])
-
-        #     node.nelem.eval = res_size
-           
-        #     node.decl.extend([Decl(node.nelem.eval)])
-        #     node.decl.extend(ret_decl)
-
-        #     filter_loop.body.append([assignment])
-        #     node.compute = [filter_loop]
-
-        #     # node.compute.append(for_loop_assignment)
-            
-            # node.compute = Search(input_set, search_start, search_end, item)
-            # node.eval =  Var(f'search_res_of_{input_set.storage.name}', 'int', False)
-            # node.decl = Decl(node.eval)
-           # node.compute = [Condition(Search(input_set.eval, search_start, search_end, item.eval), [])]
-            # node.eval = Var
-            # node.decl.extend([Decl(node.eval)])
-
-
-        # if node.op_type == 'intersect':
-        #     node.operators[0]._gen_ir()
-        #     node.operators[1]._gen_ir()
-        #     node.storage._gen_ir()
-        #     node.nelem._gen_ir()
-        #     node.eval = Ref(node.storage.eval)
-        #     node.decl = [Decl(node.eval)]
-
-        #     first = node.operators[0].eval
-        #     second = node.operators[1].eval
-
-        #     first_size = node.operators[0].nelem.eval
-        #     second_size = node.operators[1].nelem.eval
-
-
-            # for(i=0; i<input.size; i++){
-            #     if(condition(xxx)){
-            #         output[i] = input[i]
-            #     }
-            # }
-
-            # A.filter(is_in)
-            # Loop()
-
-            # filter_ir = Filter(first, None,  node.eval)
-            # filter_ir.condition = Search(second, 0, second_size,  Index(first, filter_ir.iterate))
-
-            # for
-            # if(condition){
-            #     out
-            # }
-
-            # intersect = Intersect(first, first_size, second, second_size, node.eval)
-            # for_loop = Loop(0, first_size, 1, [])
-            # res = Index(node.eval, for_loop.iterate)
-            # for_loop.body.extend([Assignment(Index(node.eval, for_loop.iterate), Search(second, 0, second_size, Index(first, for_loop.iterate)), '+')])
-
-            # node.compute = [Assignment(node.nelem.eval, intersect)]
-            # node.compute = [filter_ir]
+            # node.compute=[]
         
-        # elif node.op_type == 'apply':
-        #     pass
+        elif node.op_type == 'intersection' or node.op_type == 'difference':
+            input_set1 = node.operators[0]
+            input_func_ast = node.operators[1]
+            item = node.operators[2]
+            input_set1._gen_ir()
+            item._gen_ir()
 
-        # elif node.op_type == 'sum':
-        #     node.operators[0]._gen_ir()
-        #     node.storage._gen_ir()
-        #     node.nelem._gen_ir()
-        #     node.eval = Scalar(node.dtype)
-        #     node.decl = [Decl(node.eval)]
+            input_set2 = input_func_ast.operators[1]
+            input_set2._gen_ir()
 
-        #     for_loop = Loop(0, node.operators[0].nelem.eval, 1, [])
-        #     for_loop.body.extend([Assignment(node.eval, Index(node.operators[0].storage.eval, for_loop.iterate), '+')])
+            node.storage._gen_ir()
+            node.eval = node.storage.eval
+            node.nelem._gen_ir()
 
-        #     node.compute = [for_loop]
-        
-        # elif node.op_type == 'index':
-        #     node.operators[0]._gen_ir()
-        #     node.operators[1]._gen_ir()
+            if input_func_ast.op_type == 'function_call':
+                if node.op_type == 'intersection':
+                    func_template = "res_size = SetIntersection(first_arr, first_size, second_arr, second_size, res_arr);"
+                else:
+                    func_template = "res_size = SetDifference(first_arr, first_size, second_arr, second_size, res_arr);"
+
+                keywords = {'first_arr' : bind(input_set1.eval, Literal(0, 'int')),
+                            'first_size': input_set1.nelem.eval,
+                            'second_arr' : bind(input_set2.eval, Literal(0, 'int')),
+                            'second_size': input_set2.nelem.eval,
+                            'res_arr':  bind(node.eval,Literal(0, 'int')),
+                            'res_size': node.nelem.eval}
+                node.compute.extend([Code(func_template, keywords)])
+            
+            elif input_func_ast.op_type == 'inline_code':
+                outer_loop = Loop(0, input_set1.nelem.eval, 1, [])
+                pi_ir = outer_loop.iterate
+                pj_ir =  Scalar('int')
+                pos_ir =  node.nelem.eval
+
+                if node.op_type == 'intersection':
+                    merge_template = \
+                        "if(first_smaller_second) continue; \n\
+                        else if (first_larger_second) { \n\
+                            while(pj_smaller_secondsize && first_larger_second){    \n\
+                                pj_increment;                                       \n\
+                            } \n\
+                        } \n\
+                        if(pj_equal_secondsize) break;  \n\
+                        if(first_equal_second) { \n\
+                            assignment\n\
+                            pos_increment; \n\
+                            continue; \n\
+                        }"
+                else:
+                    merge_template = \
+                        "if(first_smaller_second) { } \n\
+                        else if (first_larger_second) { \n\
+                            while(pj_smaller_secondsize && first_larger_second){    \n\
+                                pj_increment;                                           \n\
+                            } \n\
+                        } \n\
+                        if(pj_equal_secondsize) {  \n\
+                            assignment\n\
+                            pos_increment; \n\
+                            continue; \n\
+                        } \n\
+                        if(first_equal_second) { \n\
+                            pj_increment; \n\
+                        }  \n\
+                        else{ \n\
+                            assignment\n\
+                            pos_increment; \n\
+                        }"
+
+                keywords = {'first_smaller_second' : Expr(bind(input_set1.eval, pi_ir), bind(input_set2.eval, pj_ir), '<'),
+                            'first_larger_second': Expr(bind(input_set1.eval, pi_ir), bind(input_set2.eval, pj_ir), '>'),
+                            'first_equal_second' : Expr(bind(input_set1.eval, pi_ir), bind(input_set2.eval, pj_ir), '=='),
+                            'pj_smaller_secondsize': Expr(pj_ir,  input_set2.nelem.eval, '<'),
+                            'pj_equal_secondsize':  Expr(pj_ir,  input_set2.nelem.eval, '=='),
+                            'pj_increment': Expr(pj_ir,  1, '+='),
+                            'pos_increment': Expr(pos_ir,  1, '+='),
+                            'assignment': Assignment(bind(node.eval, pos_ir), bind(input_set1.eval, pi_ir))
+                            }
+                
+                node.decl.extend([Decl(pj_ir)])  
+                outer_loop.body.append(Code(merge_template, keywords))
+                node.compute.extend([Assignment(pj_ir, 0), Assignment(pos_ir, 0), outer_loop])
+
+    for d in node.decl:
+        d.astnode = node
+
+    if type(node) == SetOp:
+        for s in node.compute:
+            s.astnode = node
 
     return node
