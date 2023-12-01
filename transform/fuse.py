@@ -1,7 +1,7 @@
 from core.asg import *
 from core.ir import *
 import codegen
-from helpers import get_obj, get_val, ASGTraversal, rebind_iterate, IRTraversal, ir_defs, ir_uses, remove_decl, clear_compute, ir_find_defs
+from helpers import get_obj, get_val, ASGTraversal, rebind_iterate, IRTraversal, ir_defs, ir_uses, remove_decl, clear_compute, ir_find_defs, same_object
 
 
 
@@ -35,7 +35,7 @@ def _replace_arrindex_with_scalar(ir, old, new):
     elif type(ir) == FilterLoop:
         if type(ir.cond) in (Indexing, Scalar):
             obj = get_obj(ir.cond)
-            if obj == old:
+            if obj.dobject_id == old.dobject_id:
                 ir.cond = new
         else:
             _replace_arrindex_with_scalar(ir.cond, old, new)
@@ -44,47 +44,47 @@ def _replace_arrindex_with_scalar(ir, old, new):
     elif type(ir) == Expr:
         if type(ir.left) in (Indexing, Scalar):
             obj = get_obj(ir.left)
-            if obj == old:
+            if obj.dobject_id == old.dobject_id:
                 ir.left = new
         else:
             _replace_arrindex_with_scalar(ir.left, old, new)
         if type(ir.right) in (Indexing, Scalar):
             obj = get_obj(ir.right)
-            if obj == old:
+            if obj.dobject_id == old.dobject_id:
                 ir.right = new
         else:
             _replace_arrindex_with_scalar(ir.right, old, new)
     elif type(ir) == Assignment:
         if type(ir.lhs) in (Indexing, Scalar):
             obj = get_obj(ir.lhs)
-            if obj == old:
+            if obj.dobject_id == old.dobject_id:
                 ir.lhs = new
         else:
             _replace_arrindex_with_scalar(ir.lhs, old, new)
         if type(ir.rhs) in (Indexing, Scalar):
             obj = get_obj(ir.rhs)
-            if obj == old:
+            if obj.dobject_id == old.dobject_id:
                 ir.rhs = new
         else:
             _replace_arrindex_with_scalar(ir.rhs, old, new)
     elif type(ir) == Slice:
         if type(ir.start) in (Indexing, Scalar):
             obj = get_obj(ir.start)
-            if obj == old:
+            if obj.dobject_id == old.dobject_id:
                 ir.start = new
         else:
             _replace_arrindex_with_scalar(ir.start, old, new)
 
         if type(ir.stop) in (Indexing, Scalar):
             obj = get_obj(ir.stop)
-            if obj == old:
+            if obj.dobject_id == old.dobject_id:
                 ir.stop = new
         else:
             _replace_arrindex_with_scalar(ir.stop, old, new)
 
         if type(ir.step) in (Indexing, Scalar):
             obj = get_obj(ir.step)
-            if obj == old:
+            if obj.dobject_id == old.dobject_id:
                 ir.step = new
         else:
             _replace_arrindex_with_scalar(ir.step, old, new)
@@ -92,14 +92,14 @@ def _replace_arrindex_with_scalar(ir, old, new):
     elif type(ir) == Math:
         if type(ir.val) in (Indexing, Scalar):
             obj = get_obj(ir.val)
-            if obj == old:
+            if obj.dobject_id == old.dobject_id:
                 ir.val = new
         else:
             _replace_arrindex_with_scalar(ir.val, old, new)
     elif type(ir) == Code:
         if type(ir.output[1]) in (Indexing, Scalar):
             obj = get_obj(ir.output[1])
-            if obj == old:
+            if obj.dobject_id== old.dobject_id:
                 ir.output = (ir.output[0], new)
         # TODO: replace inputs
 
@@ -112,11 +112,11 @@ def match_orders(order1, order2):
             x2 = get_val(order2[i][1].start)
             y2 = get_val(order2[i][1].end)
             z2 = get_val(order2[i][1].step)
-            if x1 == None or (x1 != x2 and x1.dobject_id != x2.dobject_id):
+            if x1 == None or not same_object(x1, x2):
                 return False
-            if y1 == None or (y1 != y2 and y1.dobject_id != y2.dobject_id):
+            if y1 == None or not same_object(y1, y2):
                 return False
-            if z1 == None and (z1 != z2 and z1.dobject_id != z2.dobject_id):
+            if z1 == None and not same_object(z1, z2):
                 return False
         return True
     else:
@@ -145,7 +145,7 @@ def merge_loops(order1, order2, data, this_node, input_node):
                 df = dfs[-1].rhs
                 order2[-1][1].body = [s for s in order2[-1][1].body if not ir_defs(s, data)]
 
-            if type(order1[-1][1]) == FilterLoop and data == get_obj(order1[-1][1].cond):
+            if type(order1[-1][1]) == FilterLoop and data.dobject_id == get_obj(order1[-1][1].cond).dobject_id:
                 order1[-1][1].cond_body.extend(order2[-1][1].body)
                 _replace_arrindex_with_scalar(order1[-1][1], data, df)
                 clear_compute(input_node)
@@ -175,7 +175,8 @@ def merge_loops(order1, order2, data, this_node, input_node):
 
 
 def fuse_operators(op1, order1, op2):
-    merge_loops(order1, op2.output_order, op2.eval, op1, op2)
+    if len(order1) > 0 and len(op2.output_order) > 0:
+        merge_loops(order1, op2.output_order, op2.eval, op1, op2)
 
 
 def basic_rule(node, res):

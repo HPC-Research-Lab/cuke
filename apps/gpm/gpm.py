@@ -26,8 +26,8 @@ def is_in(x, li):
     return inline(src, ('F', found), ('X', x), ('LI', li), ('LSIZE', li._size()[0]))
 
 def intersect(a: Set, b: Set):
-    c = a.apply(lambda x: is_in(x, b))
-    return Set(a.apply(lambda x: x, cond=c))
+    c = a.storage[:a.length].apply(lambda x: is_in(x, b.storage[:b.length]))
+    return Set(a.storage[:a.length].apply(lambda x: x, cond=c))
 
 
 class Graph:
@@ -78,6 +78,6 @@ def test3():
 
 
 if __name__ == "__main__":
-    test1()
+    # test1()
     # test2()
-    # test3()
+    test3()

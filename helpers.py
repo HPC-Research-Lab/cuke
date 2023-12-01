@@ -2,6 +2,13 @@ from apps import compression
 from core.asg import *
 from core.ir import *
 
+
+def same_object(a, b):
+    if isinstance(a, DObject) and isinstance(b, DObject):
+        return a.dobject_id == b.dobject_id
+    return False
+
+
 class ASGTraversal:
 
     def __init__(self, action):
@@ -37,20 +44,7 @@ class ASGTraversal:
             for c in node.operators:
                 self._post_traverse(c, visited, res)
             self.action(node, res)
-        # elif type(node) == batch.ast.Batch:
-        #     self._post_traverse(node.base, visited, res)
-        # elif type(node) == batch.ast.BatchOp:
-        #     for c in node.operators:
-        #         self._post_traverse(c, visited, res)
-        #     self.action(node, res)
-        # elif type(node) == compression.asg.Encoder:
-        #     for s in node.fix_size:
-        #         self._post_traverse(s, visited, res)
-        #     for s in node.ref_size:
-        #         self._post_traverse(s, visited, res)
-        #     for c in node.operators:
-        #         self._post_traverse(c, visited, res)
-        #     self.action(node, res)
+
 
     def __call__(self, ast):
         visited = set()
@@ -196,48 +190,48 @@ def replace_all_ref(ir, old, new):
     def action(stmt, res):
         match stmt.__class__.__name__:
             case 'Loop':
-                if stmt.start == old:
+                if same_object(stmt.start, old):
                     stmt.start = new
-                if stmt.end == old:
+                if same_object(stmt.end, old):
                     stmt.end = new
-                if stmt.step == old:
+                if same_object(stmt.step, old):
                     stmt.step = new
             case 'FilterLoop':
-                if stmt.cond == old:
+                if same_object(stmt.cond, old):
                     stmt.cond = new
-                if stmt.start == old:
+                if same_object(stmt.start, old):
                     stmt.start = new
-                if stmt.end == old:
+                if same_object(stmt.end, old):
                     stmt.end = new
-                if stmt.step == old:
+                if same_object(stmt.step, old):
                     stmt.step = new
             case 'Expr':
-                if stmt.left == old:
+                if same_object(stmt.left, old):
                     stmt.left = new
-                if stmt.right == old:
+                if same_object(stmt.right, old):
                     stmt.right = new
             case 'Assignment':
-                if stmt.lhs == old:
+                if same_object(stmt.lhs, old):
                     stmt.lhs = new
-                if stmt.rhs == old:
+                if same_object(stmt.rhs, old):
                     stmt.rhs = new
             case 'Indexing':
-                if stmt.dobject == old:
+                if same_object(stmt.dobject, old):
                     stmt.dobject = new
-                if stmt.idx == old:
+                if same_object(stmt.idx, old):
                     stmt.idx = new
             case 'Slice':
-                if stmt.start == old:
+                if same_object(stmt.start, old):
                     stmt.start = new
-                if stmt.stop == old:
+                if same_object(stmt.stop, old):
                     stmt.stop = new
-                if stmt.step == old:
+                if same_object(stmt.step, old):
                     stmt.step = new
             case 'Math':
-                if stmt.val == old:
+                if same_object(stmt.val, old):
                     stmt.val = new
             case 'Code':
-                if stmt.output[1] == old:
+                if same_object(stmt.output[1], old):
                     stmt.output = (stmt.output[0], new)
                 for k in stmt.inputs:
                     if stmt.inputs[k] == old:
@@ -251,7 +245,7 @@ def ir_uses(ir, data, avoid = []):
     def action(stmt, res):
         if stmt in avoid:
             return [False, False, False, False, False]
-        if stmt == data or (isinstance(stmt, DObject) and stmt.dobject_id == data.dobject_id):
+        if stmt == data or same_object(stmt, data):
             if len(res) == 0:
                 res.append(True)
             else:
@@ -325,9 +319,9 @@ def clear_compute(node):
 
 def ir_find_defs(ir, data):
     def action(stmt, res):
-        if type(stmt) == Assignment and get_obj(stmt.lhs) == data:
+        if type(stmt) == Assignment and get_obj(stmt.lhs).dobject_id == data.dobject_id:
             res.append(stmt)
-        elif type(stmt) == Code and get_obj(stmt.output[1]) == data:
+        elif type(stmt) == Code and get_obj(stmt.output[1]).dobject_id == data.dobject_id:
             res.append(stmt)
 
         return [True, True, True, True, True]

@@ -12,35 +12,76 @@ def num_unbind(index):
         return 0
 
 
-def get_first_unbind(index: (Indexing, Ndarray, Slice)):
-    if type(index) == Indexing:
-        x = get_first_unbind(index.dobject)
-        if x != None:
-            return x
-        else:
-            if type(index.idx) == Literal and index.idx.val == -1:
-                return index
+# def get_first_unbind(index: (Indexing, Ndarray, Slice)):
+#     if type(index) == Indexing:
+#         x = get_first_unbind(index.dobject)
+#         if x != None:
+#             return x
+#         else:
+#             if type(index.idx) == Literal and index.idx.val == -1:
+#                 return index
+#             else:
+#                 y = get_first_unbind(index.idx)
+#                 return y
+#     return None
+
+
+def bind(object: Indexing | Ndarray | Slice, subscripts: list | tuple, attrs = None):
+    new_index = copy.deepcopy(object)
+    if attrs == None:
+        attrs = [{} for _ in range(len(subscripts))]
+    j = 0
+    if type(new_index) == Indexing:
+        indices = [new_index]
+        while type(indices[-1].dobject) == Indexing:
+            indices.append(indices[-1].dobject)
+        indices.reverse()
+        i = 0
+        while i < len(indices) and j < len(subscripts):
+            index = indices[i]
+            i += 1
+            while type(index.idx) == Indexing:
+                index = index.idx
+            assert type(index.idx) in (Scalar, Literal)
+            if type(index.idx) == Scalar or (type(index.idx) == Literal and index.idx.val != -1):
+                continue
+            idx = subscripts[j]
+            if type(idx) in (Scalar, Literal, Indexing):
+                index.idx = idx
+            elif type(idx) in (Ndarray, Slice):
+                index.idx = Indexing(idx, Literal(-1, 'int'))
             else:
-                y = get_first_unbind(index.idx)
-                return y
-    return None
+                raise TypeError('idx type error when binding')
+            index.attr.update(attrs[j])
+            j += 1
 
+    while j < len(subscripts):
+        idx = subscripts[j]
+        if type(idx) in (Scalar, Literal, Indexing):
+            new_index = Indexing(new_index, idx)
+        elif type(idx) in (Ndarray, Slice):
+            new_index = Indexing(new_index, Indexing(idx, Literal(-1, 'int')))
+        else:
+            raise TypeError('incorrect idx type!')
+        new_index.attr.update(attrs[j])
+        j += 1
 
-def bind(index: (Indexing, Ndarray, Slice), idx, attr={}):
-    x = get_first_unbind(index)
-    if x == None:
-        res = Indexing(index, idx)
-        res.attr.update(attr)
-        return res
-    else:
-        old = copy.copy(x.idx)
-        old_attr = copy.copy(x.attr)
-        x.idx = idx
-        x.attr.update(attr)
-        new_index = copy.deepcopy(index)
-        x.idx = old
-        x.attr = old_attr
-        return new_index
+    return new_index
+
+    # x = get_first_unbind(index)
+    # if x == None:
+    #     res = Indexing(index, idx)
+    #     res.attr.update(attr)
+    #     return res
+    # else:
+    #     old = copy.copy(x.idx)
+    #     old_attr = copy.copy(x.attr)
+    #     x.idx = idx
+    #     x.attr.update(attr)
+    #     new_index = copy.deepcopy(index)
+    #     x.idx = old
+    #     x.attr = old_attr
+    #     return new_index
 
 
 def get_slice(index: (Indexing, Ndarray, Slice)):
@@ -165,12 +206,12 @@ def gen_ir(node):
                     pre_loop.attr['loop_ofs'] = loop_ofs
 
                 if level < left_levels:
-                    lhs = bind(lhs, pre_loop.iterate, left_attr)
+                    lhs = bind(lhs, [pre_loop.iterate], [left_attr])
                     node.input_orders[0].append((level, pre_loop))
                 if level < right_levels:
-                    rhs = bind(rhs, pre_loop.iterate, right_attr)
+                    rhs = bind(rhs, [pre_loop.iterate], [right_attr])
                     node.input_orders[1].append((level, pre_loop))
-                res = bind(res, pre_loop.iterate)
+                res = bind(res, [pre_loop.iterate])
                 node.output_order.append((level, pre_loop))
                 pre_loop.attr['output_axis'] = level
                 ir.append(pre_loop)
@@ -211,9 +252,9 @@ def gen_ir(node):
                 if ofs > 0:
                     pre_loop.attr['loop_ofs'] = ofs
 
-                val = bind(val, pre_loop.iterate, attr)
+                val = bind(val, [pre_loop.iterate], [attr])
                 node.input_orders[0].append((level, pre_loop))
-                res = bind(res, pre_loop.iterate)
+                res = bind(res, [pre_loop.iterate])
                 node.output_order.append((level, pre_loop))
                 pre_loop.attr['output_axis'] = level
                 ir.append(pre_loop)
@@ -239,12 +280,12 @@ def gen_ir(node):
                     size = get_ir_of_size(node.ref_size)
                     pre_loop = Loop(0, size[0], 1, [])
                     node.compute = [pre_loop]
-                    res = bind(node.eval, pre_loop.iterate)
+                    res = bind(node.eval, [pre_loop.iterate])
                     for i in range(1, len(size)):
                         loop = Loop(0, size[i], 1, [])
                         pre_loop.body.append(loop)
                         pre_loop = loop
-                        res = bind(res, pre_loop.iterate)
+                        res = bind(res, [pre_loop.iterate])
 
                     assign = Assignment(res, val)
                     pre_loop.body.append(assign)
@@ -326,12 +367,12 @@ def gen_ir(node):
 
             op1 = node.operators[0].eval
             for i in input1:
-                op1 = bind(op1, all_loops[mapping[i]].iterate)
+                op1 = bind(op1, [all_loops[mapping[i]].iterate])
 
             if node.operators[1] != None:
                 op2 = node.operators[1].eval
                 for i in input2:
-                    op2 = bind(op2, all_loops[mapping[i]].iterate)
+                    op2 = bind(op2, [all_loops[mapping[i]].iterate])
             else:
                 op2 = None
 
@@ -343,7 +384,7 @@ def gen_ir(node):
             node.decl = [Decl(node.eval)]
             res = node.eval
             for i in output:
-                res = bind(res, all_loops[mapping[i]].iterate)
+                res = bind(res, [all_loops[mapping[i]].iterate])
 
             if op2 != None:
                 expr = Expr(op1, op2, '*')
@@ -375,30 +416,12 @@ def gen_ir(node):
 
         elif node.op_type == 'index':
             node.operators[0]._gen_ir()
-            node.operators[1]._gen_ir()
-            if type(node.operators[1].eval) in (Scalar, Literal, Indexing):
-                node.eval = Indexing(node.operators[0].eval, node.operators[1].eval)
-            elif type(node.operators[1].eval) == Ndarray:
-                node.eval = Indexing(node.operators[0].eval, Indexing(node.operators[1].eval, Literal(-1, 'int')))
-            elif type(node.operators[1].eval) == Slice:
-                if node.full_range == True:
-                    node.eval = Indexing(node.operators[0].eval, Indexing(node.operators[1].eval, Literal(-1, 'int')))
-                else:
-                    if type(node.operators[0].eval) == Indexing and type(node.operators[0].eval.idx) == Indexing and type(node.operators[0].eval.idx.dobject) == Slice:
-                        x1 = node.operators[0].eval.idx.dobject
-                        x2 = node.operators[1].eval
-                        start = Expr(x1.start, Expr(x2.start, x1.step, '*'), '+')
-                        step = Expr(x1.step, x2.step, '*')
-                        stop = Expr(x1.start, Expr(x1.step, x2.stop, '*'), '+')
-                        x1.start = start
-                        x1.step = step
-                        x1.stop = stop
-                        node.eval = node.operators[0].eval
-                    else:
-                        node.eval = Indexing(node.operators[0].eval, Indexing(node.operators[1].eval, Literal(-1, 'int')))
-            else:
-                raise TypeError('incorrect index type!')
+            subscripts = []
+            for op in node.operators[1:]:
+                op._gen_ir()
+                subscripts.append(op.eval)
 
+            node.eval = bind(node.operators[0].eval, subscripts)
 
         elif node.op_type == 'apply':
             func = node.operators[0]
@@ -433,7 +456,7 @@ def gen_ir(node):
                 if axis >= n:
                     item.eval = Indexing(item.eval, outer_loop.iterate)
                 else:
-                    item.eval = bind(item.eval, outer_loop.iterate)
+                    item.eval = bind(item.eval, [outer_loop.iterate])
 
             # since input items of func has been generated and indexed, we can generate the IR of the func
             ret = node.operators[-2]
@@ -477,7 +500,7 @@ def gen_ir(node):
             node.compute = [outer_loop]
 
             out_ofs = node.operators[1 + 2 * node.nparams]
-            res = bind(node.eval, outer_loop.iterate) if out_ofs == None else node.eval
+            res = bind(node.eval, [outer_loop.iterate]) if out_ofs == None else node.eval
             replace_all_ref(node.compute, ret.eval, res)
             remove_decl(ret, ret.eval)
             # if there is an offset for output storage
@@ -538,7 +561,7 @@ def gen_ir(node):
             if axis > n:
                 item2.eval = Indexing(item2.eval, outer_loop.iterate)
             else:
-                item2.eval = bind(item2.eval, outer_loop.iterate)
+                item2.eval = bind(item2.eval, [outer_loop.iterate])
             item2.decl = []
             item1.decl = []
 

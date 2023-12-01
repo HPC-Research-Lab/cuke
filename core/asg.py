@@ -32,34 +32,40 @@ def is_1dint_tensor(v):
     return is_1d_tensor(v) and v.dtype == 'int'
 
 
-def eval_const_expr(e):
-    if type(e) == TensorOp and (e.op_type in arith_op):
-        lhs = eval_const_expr(e.operators[0])
-        if lhs != None:
-            rhs = eval_const_expr(e.operators[1])
-            if rhs != None:
-                match e.op_type:
-                    case 'add':
-                        return lhs + rhs
-                    case 'sub':
-                        return lhs - rhs
-                    case 'mul':
-                        return lhs * rhs
-                    case 'floordiv':
-                        return lhs // rhs
-                    case 'truediv':
-                        return lhs / rhs
-                    case _:
-                        return None
+def eval_const_expr(expr):
+    def _eval_expr(e):
+        if type(e) == TensorOp and (e.op_type in arith_op):
+            lhs = eval_const_expr(e.operators[0])
+            if lhs != None:
+                rhs = eval_const_expr(e.operators[1])
+                if rhs != None:
+                    match e.op_type:
+                        case 'add':
+                            return lhs + rhs
+                        case 'sub':
+                            return lhs - rhs
+                        case 'mul':
+                            return lhs * rhs
+                        case 'floordiv':
+                            return lhs // rhs
+                        case 'truediv':
+                            return lhs / rhs
+                        case _:
+                            return None
+                else:
+                    return None
             else:
                 return None
+        elif type(e) == Const:
+            return e.val
         else:
             return None
-    elif type(e) == Const:
-        return e.val
-    else:
-        return None
 
+    v = _eval_expr(expr)
+    if v != None:
+        return v
+    else:
+        return expr
 
 def has_same_value(e1, e2):
     if type(e1) != type(e2):
@@ -99,13 +105,8 @@ def is_same_size(s1, s2):
                 return has_same_value(s1[i], s2[i])
             else:
                 v1 = eval_const_expr(s1[i])
-                if v1 != None:
-                    v2 = eval_const_expr(s2[i])
-                    if v2 != None:
-                        if v1 == v2:
-                            return True
-                return False
-
+                v2 = eval_const_expr(s2[i])
+                return v1 == v2
     return True
 
 
@@ -206,7 +207,7 @@ class Tensor(ASTNode):
         return TensorOp('einsum', self, other, 'ij,jk->ik')
 
     def __getitem__(self, idx):
-        assert isinstance(idx, (int, slice, Tensor))
+        assert isinstance(idx, (int, slice, Tensor, tuple))
         return TensorOp('index', self, idx)
 
 
@@ -285,7 +286,7 @@ class Tensor(ASTNode):
             return setval(out, data[-1:data._size()[axis]] + res[-1:size[axis] - 1])
 
     def _size(self):
-        return self.fix_size + self.ref_size
+        return self.ref_size
 
     def size(self):
         s = self._size()  # s is a list of int, Var, or Const
@@ -406,53 +407,53 @@ class TensorOp(Tensor):
 
         elif op_type == 'index':
             dtype = operators[0].dtype
-            ref_size = self.operators[0].ref_size[1:]
-            fix_size = self.operators[0].fix_size[:]
-            if type(self.operators[1]) == int:
-                self.operators[1] = Const(self.operators[1], 'int')
-            elif type(self.operators[1]) == slice:
-                self.full_range = True
-                start = self.operators[1].start
-                self.full_range &= (start == None)
-                if start == None:
-                    start = Const(0, 'int')
-                elif type(start) == int:
-                    start = Const(start, 'int')
-                stop = self.operators[1].stop
-                self.full_range &= (stop == None)
-                if stop == None:
-                    stop = self.operators[0].ref_size[0]
-                elif type(stop) == int:
-                    stop = Const(stop, 'int')
-                step = self.operators[1].step
-                self.full_range &= (step == None)
-                if step == None:
-                    step = Const(1, 'int')
-                elif type(step) == int:
-                    step = Const(step, 'int')
+            if not type(operators[1]) in (list, tuple):
+                self.operators[1] = [operators[1]]
+            ref_size = self.operators[0]._size()[len(self.operators[1]):]
+            fix_size = []
 
-                self.operators[1] = Const(slice(start, stop, step), 'slice')
-                if step.val == 1:
-                    csize = eval_const_expr(stop - start)
-                else:
-                    csize = eval_const_expr((stop - start) // step)
-                if csize == None:
+            new_size = []
+            new_idx = []
+            for i in range(len(self.operators[1])):
+                idx = self.operators[1][i]
+                if type(idx) == slice:
+                    start = idx.start
+                    if start == None:
+                        start = Const(0, 'int')
+                    elif type(start) == int:
+                        start = Const(start, 'int')
+                    stop = idx.stop
+                    if stop == None:
+                        stop = self.operators[0].ref_size[i]
+                    elif type(stop) == int:
+                        stop = Const(stop, 'int')
+                    step = idx.step
+                    if step == None:
+                        step = Const(1, 'int')
+                    elif type(step) == int:
+                        step = Const(step, 'int')
+
+                    idx = Const(slice(start, stop, step), 'slice')
+
                     if step.val == 1:
-                        csize = stop - start
+                        csize = [eval_const_expr(stop - start)]
                     else:
-                        csize = (stop - start) // step
-
-                if self.full_range:
-                    fix_size.append(csize)
+                        csize = [eval_const_expr(stop - start) // step]
+                elif is_1d_tensor(idx):
+                    csize = [idx.ref_size[0]]
+                elif is_int_var(idx) or type(idx) == int:
+                    csize = []
+                    if type(idx) == int:
+                        idx = Const(idx, 'int')
                 else:
-                    ref_size.insert(0, csize)
+                    raise TypeError('index data type error!')
 
-            elif is_int_var(self.operators[1]):
-                self.operators[1] = self.operators[1]
-            elif is_1dint_tensor(self.operators[1]):
-                fix_size.append(self.operators[1]._size()[0])
-            else:
-                raise TypeError('index must be int, Var of int, or 1d int Tensor')
+                new_size.extend(csize)
+                new_idx.append(idx)
+
+            ref_size[0:0] = new_size
+            self.operators.pop()
+            self.operators.extend(new_idx)
 
         elif op_type == 'apply':
             func = self.operators[0]
