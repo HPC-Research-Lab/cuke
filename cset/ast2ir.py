@@ -1,6 +1,5 @@
 from cset.ast import *
 from cset.ir import *
-from core.asg2ir import *
 import helpers
 
 # if input_fun:

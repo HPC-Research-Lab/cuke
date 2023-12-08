@@ -1,45 +1,45 @@
 from helpers import ASGTraversal, IRTraversal, get_obj, replace_all_ref
-from core.asg import *
-from core.ir import *
+from asg import *
+from ir import *
 from transform.fuse import fuser, basic_rule
 import codegen
 
 
 
 
-def _get_ref_idx(ir, v):
+def _get_ref_idx(stmt, v):
     def _get_scalar_idx(idx):
         assert type(idx) == Indexing
-        def action(stmt, res):
-            if type(stmt) == Scalar:
-                res.append(stmt)
-            elif type(stmt) == Ndarray:
+        def action(s, res):
+            if type(s) == Scalar:
+                res.append(s)
+            elif type(s) == Ndarray:
                 return [False]
 
-            return [True, True, True, True]
+            return [True, True, True, True, True]
 
         t = IRTraversal(action)
         res = t(idx)
         return res
 
-    def action(stmt, res):
-        if type(stmt) == Indexing:
-            if get_obj(stmt).dobject_id == v.dobject_id:
+    def action(s, res):
+        if type(s) == Indexing:
+            if get_obj(s).dobject_id == v.dobject_id:
                 if len(res) == 0:
-                    res.append(_get_scalar_idx(stmt))
+                    res.append(_get_scalar_idx(s))
                 return [False, False]
             else:
                 return [False, True]
-        elif type(stmt) in (Scalar, Ndarray):
-            if stmt.dobject_id == v.dobject_id:
+        elif type(s) in (Scalar, Ndarray):
+            if s.dobject_id == v.dobject_id:
                 if len(res) == 0:
                     res.append([])
 
-        return [True, True, True, True]
+        return [True, True, True, True, True]
 
 
     t = IRTraversal(action)
-    res = t(ir)
+    res = t(stmt)
     if len(res) > 0:
         return res[0]
     else:
@@ -62,9 +62,9 @@ def _set_loop_levels(nodeir, num_procs):
                         stmt.attr['tid'] = Scalar('int', f"tid{stmt.attr['plevel']}")
                     else:
                         stmt.attr['nprocs'] = ir.attr['nprocs']
-            return [False, False, False, True]
+            return [False, False, False, False, True]
 
-        return [False, False, False, False]
+        return [False, False, False, False, False]
 
     t = IRTraversal(action)
     t(nodeir)
@@ -102,27 +102,27 @@ def _isolate_vars(node):
                                     if len(ext_size) > 0:
                                         new_vars[0][v] = (Ndarray(v.dtype, ext_size + v.size), loop_info)
 
-        return [True, True, True, True]
+        return [True, True, True, True, True]
 
     t2 = IRTraversal(find_data_races)
     new_vars = t2(node.compute)[0]
     return new_vars
 
-def parallelize(asg, num_procs=[16]):
+def parallelize(node, num_procs=[16]):
 
-    def action(node, res):
+    def action(n, res):
         if len(res) == 0:
             res.append({})
-        if len(node.compute) != 0:
-            _set_loop_levels(node.compute, num_procs)
-            res[0].update(_isolate_vars(node))
+        if len(n.compute) != 0:
+            _set_loop_levels(n.compute, num_procs)
+            res[0].update(_isolate_vars(n))
 
     t = ASGTraversal(action)
-    to_replace = t(asg)[0]
+    to_replace = t(node)[0]
 
-    def replace_decls(node, res):
+    def replace_decls(n, res):
         decl = []
-        for d in node.decl:
+        for d in n.decl:
             v = d.dobject.dobject_id
             replace_with = None
             for n in to_replace:
@@ -133,23 +133,23 @@ def parallelize(asg, num_procs=[16]):
                 decl.append(Decl(replace_with))
             else:
                 decl.append(d)
-        node.decl = decl
+        n.decl = decl
 
     t3 = ASGTraversal(replace_decls)
-    t3(asg)
+    t3(node)
 
-    def replace_refs(node, res):
-        if len(node.compute) > 0:
-            for n in to_replace:
-                new_var = to_replace[n][0]
-                for l in to_replace[n][1]:
+    def replace_refs(n, res):
+        if len(n.compute) > 0:
+            for s in to_replace:
+                new_var = to_replace[s][0]
+                for l in to_replace[s][1]:
                     new_var = Indexing(new_var, l.attr['tid'])
-                replace_all_ref(node.compute, n, new_var)
+                replace_all_ref(n.compute, s, new_var)
 
     t4 = ASGTraversal(replace_refs)
-    t4(asg)
+    t4(node)
 
-    return asg
+    return node
 
 
 def test1():

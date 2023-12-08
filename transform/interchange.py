@@ -1,7 +1,4 @@
-import codegen.cpu
-from core.ir import *
-from core.asg import *
-from helpers import rebind_iterate
+from asg import *
 
 
 def interchange(node, new_order):

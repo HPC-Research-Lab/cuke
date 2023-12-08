@@ -249,7 +249,7 @@ def test():
     print(x)
 
 if __name__ == "__main__":
-    # test() # bov success
+    # examples() # bov success
     transE() # success
     # transH() # success
     # transR() # success

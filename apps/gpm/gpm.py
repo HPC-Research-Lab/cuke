@@ -1,33 +1,22 @@
 import codegen.cpu
-import transform.fuse
-from core.asg import *
-from helpers import new_op
-
-
-class Set(Tensor):
-    def __init__(self, storage):
-        self.storage = storage
-        if hasattr(storage, 'counter'):
-            self.length = self.storage.get_member('counter')
-        else:
-            self.length = storage._size()[0]
-        self.attr = self.storage.attr
-
-
-    def _gen_ir(self):
-        return self.length._gen_ir()
+from asg import *
+from asg2ir import gen_ir
+from transform import parallelize
 
 
 def is_in(x, li):
-    src = ('''for (int i=0; i<LSIZE; i++) {
-            F = true;
-           }''')
-    found = Var('found', dtype='int')
+    src = inspect.cleandoc("""
+    for (int i=0; i<LSIZE; i++) {
+        F = true;
+    }
+    """)
+    found = Var(dtype='int')
+    found.attr['is_arg'] = False
     return inline(src, ('F', found), ('X', x), ('LI', li), ('LSIZE', li._size()[0]))
 
-def intersect(a: Set, b: Set):
-    c = a.storage[:a.length].apply(lambda x: is_in(x, b.storage[:b.length]))
-    return Set(a.storage[:a.length].apply(lambda x: x, cond=c))
+def intersect(a, b):
+    c = a.apply(lambda x: is_in(x, b))
+    return a.apply(lambda x: x, cond=c)
 
 
 class Graph:
@@ -36,27 +25,33 @@ class Graph:
         self.colidx = colidx
 
     def get_neighbor(self, v):
-        return Set(self.colidx[self.rowptr[v]:self.rowptr[v + 1]])
+        return self.colidx[self.rowptr[v]:self.rowptr[v + 1]]
 
+
+def test0():
+    A = Tensor((10, ))
+    B = Tensor((10, ))
+    res = A.apply(lambda x:x, cond=B)
+    code = codegen.cpu.print_cpp(gen_ir(res))
+    print(code)
 
 
 def test1():
-    A = Set(Tensor('A', (10, )))
-    B = Set(Tensor('B', (20, )))
+    A = Tensor((10, ))
+    B = Tensor((20, ))
     res = intersect(A, B)
-    ir = res._gen_ir()
+    ir = gen_ir(res)
     code = codegen.cpu.print_cpp(ir)
     print(code)
 
 
 
 def test2():
-    A = Set(Tensor('A', (10, )))
-    B = Set(Tensor('B', (20, )))
-    C = Set(Tensor('C', (30, )))
+    A = Tensor((10, ))
+    B = Tensor((20, ))
+    C = Tensor((30, ))
     res = intersect(intersect(A, B), C)
-    ir = res._gen_ir()
-    code = codegen.cpu.print_cpp(ir)
+    code = codegen.cpu.print_cpp(gen_ir(res))
     print(code)
 
 
@@ -64,20 +59,20 @@ def test2():
 def test3():
     nnodes = 100
     nedges = 1000
-    edges = Tensor('edges', (nedges, 2), dtype='int')
-    rowptr = Tensor('rowptr', (nnodes + 1, ), dtype='int')
-    colidx = Tensor('colidx', (nedges, ), dtype='int')
+    edges = Tensor((nedges, 2), dtype='int', name='edges')
+    rowptr = Tensor((nnodes + 1, ), dtype='int', name='rowptr')
+    colidx = Tensor((nedges, ), dtype='int', name='colidx')
     g = Graph(rowptr, colidx)
-    f = lambda e: intersect(g.get_neighbor(e[0]), g.get_neighbor(e[1])).length
-    res = edges.apply(f)
-    res = res.sum()
-    ir = res._gen_ir()
-    code = codegen.cpu.print_cpp(ir)
+    res = edges.apply(lambda e: intersect(g.get_neighbor(e[0]), g.get_neighbor(e[1])).size(0))
+    res = gen_ir(res)
+    # res = parallelize.parallelize(res)
+    code = codegen.cpu.print_cpp(res)
     print(code)
 
 
 
 if __name__ == "__main__":
+    # test0()
     # test1()
     # test2()
     test3()

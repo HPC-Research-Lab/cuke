@@ -1,7 +1,7 @@
 import sys
 sys.path.append('/data/backed_up/lihhu/CUKE/cuke')
 from batch.ast import *
-from core.asg2ir import *
+from asg2ir import *
 
 def is_bvec(t):
     return isinstance(t, Batch) and t.item_type == 'vec'
@@ -21,7 +21,7 @@ def gen_ir(node):
         node.base._gen_ir()
         node.eval = node.base.eval
     elif type(node) == BatchOp:
-        if node.op_type in core.asg.arith_op:
+        if node.op_type in asg.arith_op:
             node.operators[0]._gen_ir()
             node.operators[1]._gen_ir()
             node.base._gen_ir()

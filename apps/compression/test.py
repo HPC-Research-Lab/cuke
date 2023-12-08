@@ -1,4 +1,4 @@
-from core.asg import *
+from asg import *
 import codegen
 import torch
 import run

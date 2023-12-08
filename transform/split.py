@@ -1,6 +1,6 @@
 import codegen.cpu
-from core.ir import *
-from core.asg import *
+from ir import *
+from asg import *
 from helpers import rebind_iterate, IRTraversal
 
 

@@ -1,6 +1,4 @@
-import helpers
-from core.asg import *
-from core.ir import *
+from ir import *
 from apps.compression.asg import *
 
 

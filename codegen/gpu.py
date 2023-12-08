@@ -1,7 +1,4 @@
-from core.asg2ir import *
 import helpers
-import batch
-from batch.opt.ir import *
 from codegen.gpu_instructionsets import *
 
 def to_string(ir):
@@ -113,18 +110,14 @@ def gen_cuda(ast, cpu_ir, gpu_ir):
             elif type(node) == TensorOp:
                 res.extend(node.decl)
                 # res.extend(node.compute)
-            elif type(node) == batch.ast.BatchOp:
-                res.extend(node.decl)
-                # res.extend(node.compute)
+
 
     def action_cuda(node, res):
         if node.valid:
             if type(node) == TensorOp:
                 # res.extend(node.decl)
                 res.extend(node.compute)
-            elif type(node) == batch.ast.BatchOp:
-                res.extend(node.decl)
-                res.extend(node.compute)
+
     t = helpers.ASGTraversal(action_cpu)
     cpu_ir.extend(t(ast))
 

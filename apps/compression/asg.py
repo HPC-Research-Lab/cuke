@@ -1,4 +1,4 @@
-from core.asg import *
+from asg import *
 from apps import compression
 
 

@@ -1,4 +1,4 @@
-from core.ir import *
+from ir import *
 
 class BlockIdy(IR):
     def __init__(self):

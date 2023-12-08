@@ -1,7 +1,6 @@
-from core.ir import *
-from core.asg import *
-from transform.interchange import rebind_iterate
-import helpers
+from ir import *
+from asg import *
+from helpers import rebind_iterate
 
 
 def _get_val(ir):

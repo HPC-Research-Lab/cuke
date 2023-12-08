@@ -1,4 +1,4 @@
-from core.ir import *
+from ir import *
 
 # class Intersect(IR):
 #     def __init__(self, first, first_size, second, second_size, res):

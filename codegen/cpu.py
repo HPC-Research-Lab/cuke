@@ -1,145 +1,142 @@
-from cset.ast2ir import *
-from helpers import collect_ir, get_input_nodes, ir_find_defs, remove_defchain
+from helpers import collect_ir, get_input_nodes, ir_find_defs
 import random
 import string
 from codegen.oob import lower_bound_padding
 import os
 from transform.fuse import fuser, basic_rule
+import asg
+import ir
 
 
-def to_string(ir):
+def to_string(stmt):
     # if isinstance(ir, IR) and 'invalid' in ir.attr:
     #     return ''
-    match ir.__class__.__name__:
+    match stmt.__class__.__name__:
         case 'Expr':
-            if ir.op in arith_op.values():
-                return f"({to_string(ir.left)}" + f" {ir.op} " + f"{to_string(ir.right)})"
-            elif ir.op == 'bigger':
-                return f"({to_string(ir.left)} > {to_string(ir.right)} ? ({to_string(ir.left)}) : ({to_string(ir.right)}))"
-            elif ir.op == 'smaller':
-                return f"({to_string(ir.left)} < {to_string(ir.right)} ? ({to_string(ir.left)}) : ({to_string(ir.right)}))"
+            if stmt.op in asg.arith_op.values():
+                return f"({to_string(stmt.left)}" + f" {stmt.op} " + f"{to_string(stmt.right)})"
+            elif stmt.op == 'bigger':
+                return f"({to_string(stmt.left)} > {to_string(stmt.right)} ? ({to_string(stmt.left)}) : ({to_string(stmt.right)}))"
+            elif stmt.op == 'smaller':
+                return f"({to_string(stmt.left)} < {to_string(stmt.right)} ? ({to_string(stmt.left)}) : ({to_string(stmt.right)}))"
         case 'Assignment':
-            if ir.op is None:
-                return f"{to_string(ir.lhs)} = {to_string(ir.rhs)};\n"
+            if stmt.op is None:
+                return f"{to_string(stmt.lhs)} = {to_string(stmt.rhs)};\n"
             else:
-                return f"{to_string(ir.lhs)} {ir.op}= {to_string(ir.rhs)};\n"
+                return f"{to_string(stmt.lhs)} {stmt.op}= {to_string(stmt.rhs)};\n"
         case 'Loop':
             code = ''
-            if ir.attr['ptype'] == 'naive' and 'plevel' in ir.attr and 'nprocs' in ir.attr:
-                code += f"#pragma omp parallel for num_threads({ir.attr['nprocs'][ir.attr['plevel']][0]})\n"
-            code += f"for (int {to_string(ir.iterate)} = {to_string(ir.start)}; {to_string(ir.iterate)} < {to_string(ir.end)}; {to_string(ir.iterate)} += {to_string(ir.step)}) {{\n"
-            for e in ir.body:
+            if stmt.attr['ptype'] == 'naive' and 'plevel' in stmt.attr and 'nprocs' in stmt.attr:
+                code += f"#pragma omp parallel for num_threads({stmt.attr['nprocs'][stmt.attr['plevel']][0]})\n"
+            code += f"for (int {to_string(stmt.iterate)} = {to_string(stmt.start)}; {to_string(stmt.iterate)} < {to_string(stmt.end)}; {to_string(stmt.iterate)} += {to_string(stmt.step)}) {{\n"
+            for e in stmt.body:
                 if e:
                     code += to_string(e)
             code += "} \n"
             return code
         case 'FilterLoop':
             code = ''
-            if ir.attr['ptype'] == 'naive' and 'plevel' in ir.attr and 'nprocs' in ir.attr:
-                code += f"#pragma omp parallel for num_threads({ir.attr['nprocs'][ir.attr['plevel']][0]})\n"
-            code += f"for (int {to_string(ir.iterate)} = {to_string(ir.start)}; {to_string(ir.iterate)} < {to_string(ir.end)}; {to_string(ir.iterate)} += {to_string(ir.step)}) {{\n"
-            for e in ir.cond_body:
+            if stmt.attr['ptype'] == 'naive' and 'plevel' in stmt.attr and 'nprocs' in stmt.attr:
+                code += f"#pragma omp parallel for num_threads({stmt.attr['nprocs'][stmt.attr['plevel']][0]})\n"
+            code += f"for (int {to_string(stmt.iterate)} = {to_string(stmt.start)}; {to_string(stmt.iterate)} < {to_string(stmt.end)}; {to_string(stmt.iterate)} += {to_string(stmt.step)}) {{\n"
+            for e in stmt.cond_body:
                 if e:
                     code += to_string(e)
-            code += f"if ({to_string(ir.cond)}) {{\n"
-            for e in ir.body:
+            code += f"if ({to_string(stmt.cond)}) {{\n"
+            for e in stmt.body:
                 if e:
                     code += to_string(e)
             code += "} \n"
             code += "} \n"
             return code
         case 'Not':
-            return f"!{to_string(ir.dobject)}"
+            return f"!{to_string(stmt.dobject)}"
         case 'Scalar' | 'Ndarray':
-            return ir.name()
+            return stmt.name()
         case 'Literal':
-            return str(ir.val)
+            return str(stmt.val)
         case 'Indexing':
-            if type(ir.dobject) == Slice:
-                if ir.dobject.step == 1 or (type(ir.dobject.step) == Literal and ir.dobject.step.val == 1):
-                    if ir.dobject.start == 0 or (type(ir.dobject.start) == Literal and ir.dobject.start.val == 0):
-                        return f'({to_string(ir.idx)})'
+            if type(stmt.dobject) == ir.Slice:
+                if stmt.dobject.step == 1 or (type(stmt.dobject.step) == ir.Literal and stmt.dobject.step.val == 1):
+                    if stmt.dobject.start == 0 or (type(stmt.dobject.start) == ir.Literal and stmt.dobject.start.val == 0):
+                        return f'({to_string(stmt.idx)})'
                     else:
-                        return f'(({to_string(ir.dobject.start)})+({to_string(ir.idx)}))'
+                        return f'(({to_string(stmt.dobject.start)})+({to_string(stmt.idx)}))'
                 else:
-                    if ir.dobject.start == 0 or (type(ir.dobject.start) == Literal and ir.dobject.start.val == 0):
-                        return f'(({to_string(ir.dobject.step)})*({to_string(ir.idx)}))'
+                    if stmt.dobject.start == 0 or (type(stmt.dobject.start) == ir.Literal and stmt.dobject.start.val == 0):
+                        return f'(({to_string(stmt.dobject.step)})*({to_string(stmt.idx)}))'
                     else:
-                        return f'(({to_string(ir.dobject.start)})+({to_string(ir.dobject.step)})*({to_string(ir.idx)}))'
+                        return f'(({to_string(stmt.dobject.start)})+({to_string(stmt.dobject.step)})*({to_string(stmt.idx)}))'
             else:
-                return f'{to_string(ir.dobject)}[{to_string(ir.idx)}]'
-        case 'Search':
-            code = f"BinarySearch({to_string(ir.dobject)}, {to_string(ir.start)}, {to_string(ir.end)}, {to_string(ir.item)})"
-            return code
+                return f'{to_string(stmt.dobject)}[{to_string(stmt.idx)}]'
         case 'Decl':
             # variables are passed in as pytorch arguments
-            if type(ir.dobject) == Scalar:
-                if not ir.dobject.is_arg:
-                    return f"{ir.dobject.dtype} {ir.dobject.name()};\n"
+            if type(stmt.dobject) == ir.Scalar:
+                if not stmt.dobject.attr['is_arg']:
+                    return f"{stmt.dobject.dtype} {stmt.dobject.name()};\n"
                 else:
                     return ''
-            elif type(ir.dobject) == Ndarray:
+            elif type(stmt.dobject) == ir.Ndarray:
                 code = ''
-                if not ir.dobject.is_arg:
-                    code = f'torch::Tensor obj_{ir.dobject.name()} = torch::empty({{{",".join([to_string(s) for s in ir.dobject.size])}}}, at::k{"Int" if ir.dobject.dtype=="int" else "Float"});\n'
-                code += f'auto {ir.dobject.name()} = obj_{ir.dobject.name()}.accessor<{ir.dobject.dtype}, {len(ir.dobject.size)}>();\n'
+                if not stmt.dobject.attr['is_arg']:
+                    code = f'torch::Tensor obj_{stmt.dobject.name()} = torch::empty({{{",".join([to_string(s) for s in stmt.dobject.size])}}}, at::k{"Int" if stmt.dobject.dtype == "int" else "Float"});\n'
+                code += f'auto {stmt.dobject.name()} = obj_{stmt.dobject.name()}.accessor<{stmt.dobject.dtype}, {len(stmt.dobject.size)}>();\n'
                 return code
         case 'Math':
-            return f"{ir.type}({to_string(ir.val)})"
+            return f"{stmt.type}({to_string(stmt.val)})"
         case 'Code':
-            code = ir.code
-            code = code.replace(ir.output[0], to_string(ir.output[1]))
-            for kw in ir.inputs:
-                code = code.replace(kw, to_string(ir.inputs[kw]))
+            code = stmt.code
+            code = code.replace(stmt.output[0], to_string(stmt.output[1]))
+            for kw in stmt.inputs:
+                code = code.replace(kw, to_string(stmt.inputs[kw]))
             return code + '\n'
         case _:
-            return str(ir)
+            return str(stmt)
 
 
-def print_cpp(asg):
+def print_cpp(node):
 
     fu = fuser()
     fu.register(basic_rule)
-    asg = fu.fuse(asg)
+    node = fu.fuse(node)
 
-    ir = []
-    lower_bound_padding(asg)
-
-    collect_ir(asg, ir)
+    stmts = []
+    lower_bound_padding(node)
+    collect_ir(node, stmts)
 
     # fix dynamic size allocation
-    for j in range(len(ir)):
-        d = ir[j]
-        if type(d) == Decl:
+    for j in range(len(stmts)):
+        d = stmts[j]
+        if type(d) == ir.Decl:
             for i in range(len(d.dobject.size)):
-                if type(d.dobject.size[i]) == Scalar:
-                    assigns = ir_find_defs(ir[j+1:], d.dobject.size[i])
-                    if len(assigns) > 0:
-                        d.dobject.size[i] = Literal(4096, 'int')
-                        # remove_defchain(ir, assigns)
+                if type(d.dobject.size[i]) == ir.Scalar:
+                    if 'dynamic_size' in d.dobject.size[i].attr:
+                        d.dobject.size[i] = ir.Literal(4096, 'int')
+                        # TODO: remove the decl of the variable if it is not used elsewhere
 
 
 
 
-    args = get_input_nodes(asg)
-    args = ', '.join([f'torch::Tensor obj_{a}' if type(args[a]) == Tensor else f'{args[a].dtype} {a}' for a in args])
+    args = get_input_nodes(node)
+    args = ', '.join([f'torch::Tensor obj_{a}' if type(args[a]) == asg.Tensor else f'{args[a].dtype} {a}' for a in args])
 
     code = ''
-    for d in ir:
+    for d in stmts:
         if d:
             code += to_string(d)
 
 
-    if type(asg.eval) == Scalar:
-        rtype = asg.dtype
-        code += f'return {asg.eval.name()};\n'
-    elif type(asg.eval) == Ndarray:
+    if type(node.eval) == ir.Scalar:
+        rtype = node.dtype
+        code += f'return {node.eval.name()};\n'
+    elif type(node.eval) == ir.Ndarray:
         rtype = 'torch::Tensor'
-        code += f'return obj_{asg.eval.name()};\n'
+        code += f'return obj_{node.eval.name()};\n'
     else:
-        raise TypeError('wrong output type', asg.eval)
+        rtype = 'void'
+        # raise TypeError('wrong output type', node.eval)
 
     with open(f'{os.path.dirname(__file__)}/cpp_template.txt', 'r') as f:
         c_code = f.read()
-        c_code = c_code.replace('RTYPE', rtype).replace('FNAME', asg.name[:24] + ''.join(random.choices(string.ascii_lowercase, k=8))).replace('ARGS', args).replace('CODE', code)
+        c_code = c_code.replace('RTYPE', rtype).replace('FNAME', node.name[:24] + ''.join(random.choices(string.ascii_lowercase, k=8))).replace('ARGS', args).replace('CODE', code)
     return c_code

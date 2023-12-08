@@ -1,18 +1,16 @@
 import torch
-import run
-from core.asg2ir import *
+from asg import Tensor, Var
+from asg2ir import gen_ir
 import codegen
-import helpers
-from transform import fuse
+import run
+from helpers import get_input_nodes
+
 
 def test1():
-    def func():
-        A = Tensor('a', (10, 20))
-        B = Tensor('b', (10, 20))
-        return A + B - 1
-
-    ast = func()
-    code = codegen.cpu.print_cpp(ast._gen_ir())
+    A = Tensor((10, 20))
+    B = Tensor((10, 20))
+    res = A + B - 1
+    code = codegen.cpu.print_cpp(gen_ir(res))
     print(code)
 
     A = torch.rand(10, 20)
@@ -24,12 +22,12 @@ def test1():
 
 def test2():
 
-    n = Var('n')
-    m = Tensor('m', (n, 2))
-    i = Var('idx')
-    t = Tensor('t', m[i]._size())
+    n = Var('int')
+    m = Tensor((n, 2))
+    i = Var('int')
+    t = Tensor(m[i]._size())
     res = m[i] + t
-    code = codegen.cpu.print_cpp(res._gen_ir())
+    code = codegen.cpu.print_cpp(gen_ir(res))
     print(code)
 
     n = 10
@@ -43,33 +41,33 @@ def test2():
 
 
 def test3():
-    A = Tensor('a', (10, 2, 2))
-    i = Var('i')
-    j = Var('j')
-    t = Tensor('t', A[i][j]._size())
+    A = Tensor((10, 2, 2))
+    i = Var('int')
+    j = Var('int')
+    t = Tensor(A[i][j]._size())
 
     ast = A[i][j] + t
 
-    print(helpers.get_input_nodes(ast))
+    code = codegen.cpu.print_cpp(gen_ir(ast))
+    print(code)
 
     A = torch.rand(10, 2, 2)
     i = 1
     j = 1
     t = torch.rand(A[i][j].shape)
 
-    d = run.cpu.compile_and_run(codegen.cpu.print_cpp(gen_ir(ast)), A, i, j, t)
+    d = run.cpu.compile_and_run(code, A, i, j, t)
     print(torch.equal(A[i][j] + t, d))
 
 
 
 def test4():
-    A = Tensor('a', (10, ))
-    i = Var('i')
-    t = Var('t', A.dtype)
+    A = Tensor((10, ))
+    i = Var('int')
+    t = Var(A.dtype)
 
     ast = A[i] + t
-    ir = gen_ir(ast)
-    code = codegen.cpu.print_cpp(ir)
+    code = codegen.cpu.print_cpp(gen_ir(ast))
 
     A = torch.rand(10)
     i = 1
@@ -78,10 +76,10 @@ def test4():
     print(d, A[i] + t)
 
 def test5():
-    A = Tensor('a', (10, 20))
-    B = Tensor('b', (10, 20))
+    A = Tensor((10, 20))
+    B = Tensor((10, 20))
     res = A[1:3][1] + B[2:4][0] - 1
-    code = codegen.cpu.print_cpp(res._gen_ir())
+    code = codegen.cpu.print_cpp(gen_ir(res))
     print(code)
 
     A = torch.rand(10, 20)
@@ -91,14 +89,13 @@ def test5():
     print(torch.equal(A[1:3][1] + B[2:4][0] - 1, d))
 
 def test6():
-    A = Tensor('a', (10, ))
-    idx = Tensor('idx', (5, ), dtype='int')
-    t = Tensor('t', A[idx]._size())
+    A = Tensor((10, ))
+    idx = Tensor((5, ), dtype='int')
+    t = Tensor(A[idx]._size())
 
-    ast = A[idx] + t
-    ir = gen_ir(ast)
+    res = A[idx] + t
 
-    code = codegen.cpu.print_cpp(ir)
+    code = codegen.cpu.print_cpp(gen_ir(res))
     A = torch.rand(10)
     idx = torch.IntTensor(5)
     t = torch.rand(A[idx].shape)
@@ -110,14 +107,13 @@ def test6():
 
 
 def test7():
-    A = Tensor('a', (10, 10))
-    idx = Tensor('idx', (5, ), dtype='int')
-    t = Tensor('t', A[idx]._size())
+    A = Tensor((10, 10))
+    idx = Tensor((5, ), dtype='int')
+    t = Tensor(A[idx]._size())
 
-    ast = A[idx] + t
-    ir = gen_ir(ast)
+    res = A[idx] + t
 
-    code = codegen.cpu.print_cpp(ir)
+    code = codegen.cpu.print_cpp(gen_ir(res))
     A = torch.rand(10, 10)
     idx = torch.IntTensor(5)
     t = torch.rand(A[idx].shape)
@@ -128,13 +124,12 @@ def test7():
     print(torch.equal(d, A[idx] + t))
 
 def test8():
-    A = Tensor('a', (10, 10))
-    idx = Tensor('idx', (5, ), dtype='int')
+    A = Tensor((10, 10))
+    idx = Tensor((5, ), dtype='int')
 
-    ast = A[0][idx] + 1
-    ir = gen_ir(ast)
+    res = A[0][idx] + 1
 
-    code = codegen.cpu.print_cpp(ir)
+    code = codegen.cpu.print_cpp(gen_ir(res))
     A = torch.rand(10, 10)
     idx = torch.IntTensor(5)
     d = run.cpu.compile_and_run(code, A, idx)
@@ -144,15 +139,14 @@ def test8():
     print(torch.equal(d, A[0][idx] + 1))
 
 def test9():
-    A = Tensor('a', (10, 10))
-    i = Tensor('i', (5, ), dtype='int')
-    j = Tensor('j', (4, ), dtype='int')
-    t = Tensor('t', A[i][j]._size())
+    A = Tensor((10, 10))
+    i = Tensor((5, ), dtype='int')
+    j = Tensor((4, ), dtype='int')
+    t = Tensor(A[i][j]._size())
 
-    ast = A[i][j] + t
-    ir = gen_ir(ast)
+    res = A[i][j] + t
 
-    code = codegen.cpu.print_cpp(ir)
+    code = codegen.cpu.print_cpp(gen_ir(res))
     print(code)
     A = torch.rand(10, 10)
     i = torch.IntTensor(5)
@@ -165,15 +159,14 @@ def test9():
     print(torch.equal(d, A[i][j] + t))
 
 def test9_1():
-    A = Tensor('a', (10, 10))
-    i = Tensor('i', (5, ), dtype='int')
-    j = Tensor('j', (4, ), dtype='int')
-    t = Tensor('t', A[i][:,j]._size())
+    A = Tensor((10, 10))
+    i = Tensor((5, ), dtype='int')
+    j = Tensor((4, ), dtype='int')
+    t = Tensor(A[i][:,j]._size())
 
-    ast = A[i][:,j] + t
-    ir = gen_ir(ast)
+    res = A[i][:,j] + t
 
-    code = codegen.cpu.print_cpp(ir)
+    code = codegen.cpu.print_cpp(gen_ir(res))
     print(code)
     A = torch.rand(10, 10)
     i = torch.IntTensor(5)
@@ -186,17 +179,17 @@ def test9_1():
     print(torch.equal(d, A[i][:,j] + t))
 
 def test10():
-    A = Tensor('a', (10, 11, 12))
-    i = Tensor('i', (5, ), dtype='int')
-    x = Var('x', 'int')
-    j = Tensor('j', (4, ), dtype='int')
-    t = Tensor('t', A[i][j][x]._size())
+    A = Tensor((10, 11, 12))
+    i = Tensor((5, ), dtype='int')
+    x = Var( 'int')
+    j = Tensor((4, ), dtype='int')
+    t = Tensor(A[i][j][x]._size())
 
     ast = A[i][j][x] + t
-    print(helpers.get_input_nodes(ast))
     ir = gen_ir(ast)
 
     code = codegen.cpu.print_cpp(ir)
+    print(code)
     A = torch.rand(10, 11, 12)
     i = torch.IntTensor(5)
     x = 2
@@ -210,14 +203,13 @@ def test10():
 
 
 def test10_1():
-    A = Tensor('a', (10, 11, 12))
-    i = Tensor('i', (5, ), dtype='int')
-    x = Var('x', 'int')
-    j = Tensor('j', (4, ), dtype='int')
-    t = Tensor('t', A[i][:,j][x]._size())
+    A = Tensor((10, 11, 12))
+    i = Tensor((5, ), dtype='int')
+    x = Var('int')
+    j = Tensor((4, ), dtype='int')
+    t = Tensor(A[i][:,j][x]._size())
 
     ast = A[i][:,j][x] + t
-    print(helpers.get_input_nodes(ast))
     ir = gen_ir(ast)
 
     code = codegen.cpu.print_cpp(ir)
@@ -235,14 +227,13 @@ def test10_1():
 
 
 def test10_2():
-    A = Tensor('a', (10, 11, 12))
-    i = Tensor('i', (5, ), dtype='int')
-    x = Var('x', 'int')
-    j = Tensor('j', (4, ), dtype='int')
-    t = Tensor('t', A[i][:,j][:,x]._size())
+    A = Tensor((10, 11, 12))
+    i = Tensor((5, ), dtype='int')
+    x = Var('int')
+    j = Tensor((4, ), dtype='int')
+    t = Tensor(A[i][:,j][:,x]._size())
 
     ast = A[i][:,j][:,x] + t
-    print(helpers.get_input_nodes(ast))
     ir = gen_ir(ast)
 
     code = codegen.cpu.print_cpp(ir)
@@ -260,14 +251,13 @@ def test10_2():
 
 
 def test10_3():
-    A = Tensor('a', (10, 11, 12))
-    i = Tensor('i', (5, ), dtype='int')
-    x = Var('x', 'int')
-    j = Tensor('j', (4, ), dtype='int')
-    t = Tensor('t', A[i][:,j][:,:,x]._size())
+    A = Tensor((10, 11, 12))
+    i = Tensor((5, ), dtype='int')
+    x = Var('int')
+    j = Tensor((4, ), dtype='int')
+    t = Tensor(A[i][:,j][:,:,x]._size())
 
     ast = A[i][:,j][:,:,x] + t
-    print(helpers.get_input_nodes(ast))
     ir = gen_ir(ast)
 
     code = codegen.cpu.print_cpp(ir)
@@ -285,14 +275,13 @@ def test10_3():
     print(torch.equal(d, A[i][:,j][:,:,x] + t))
 
 def test10_4():
-    A = Tensor('a', (10, 11, 12))
-    i = Tensor('i', (5, ), dtype='int')
-    x = Tensor('x', (3, ), 'int')
-    j = Tensor('j', (4, ), dtype='int')
-    t = Tensor('t', A[i][:,j][:,:,x]._size())
+    A = Tensor((10, 11, 12))
+    i = Tensor((5, ), dtype='int')
+    x = Tensor((3, ), 'int')
+    j = Tensor((4, ), dtype='int')
+    t = Tensor(A[i][:,j][:,:,x]._size())
 
     ast = A[i][:,j][:,:,x] + t
-    print(helpers.get_input_nodes(ast))
     ir = gen_ir(ast)
 
     code = codegen.cpu.print_cpp(ir)
@@ -312,14 +301,13 @@ def test10_4():
 
 
 def test10_5():
-    A = Tensor('a', (10, 11, 12))
-    i = Tensor('i', (5, ), dtype='int')
-    x = Tensor('x', (3, ), 'int')
-    j = Tensor('j', (4, ), dtype='int')
-    t = Tensor('t', A[:,i][:,j][:,:,x]._size())
+    A = Tensor((10, 11, 12))
+    i = Tensor((5, ), dtype='int')
+    x = Tensor((3, ), 'int')
+    j = Tensor((4, ), dtype='int')
+    t = Tensor(A[:,i][:,j][:,:,x]._size())
 
     ast = A[:, i][:,j][:,:,x] + t
-    print(helpers.get_input_nodes(ast))
     ir = gen_ir(ast)
 
     code = codegen.cpu.print_cpp(ir)
@@ -660,10 +648,10 @@ def apply_test1():
 
 
 def apply_test2():
-    d1 = Var('d1')
-    d2 = Var('d2')
-    A = Tensor('A', (d1, d2))
-    B = Tensor('B', (d1, ))
+    d1 = Var('int')
+    d2 = Var('int')
+    A = Tensor((d1, d2))
+    B = Tensor((d1, ))
     ast = A.apply(lambda x: x+B, axis=1)
     ir = gen_ir(ast)
 
@@ -814,10 +802,7 @@ def cond_apply_test3():
     C = Tensor('C', (d1,))
     cond = bigger(B + C.abs(), 0)
     ast = A.apply(lambda x: x + 1, cond=cond)
-    ir = gen_ir(ast)
-    f = fuse.fuser()
-    f.register(fuse.basic_rule)
-    code = codegen.cpu.print_cpp(f.fuse(ir))
+    code = codegen.cpu.print_cpp(ast._gen_ir())
     print(code)
 
 def test_aggr1():
@@ -1217,7 +1202,7 @@ if __name__ == "__main__":
     # test13()
     # test13_1()
     # test14()
-    # some slicing test
+    # some slicing examples
     # test15()
     # test16()
     # test17()
@@ -1230,11 +1215,11 @@ if __name__ == "__main__":
     # test_math1()
     # test_math2()
     # apply_test1()
-    # apply_test2()
+    apply_test2()
     # apply_test3()
-    apply_test4()
-    apply_test5()
-    apply_test6()
+    # apply_test4()
+    # apply_test5()
+    # apply_test6()
     # apply_test7()
     # apply_test8()
     # apply_test9()

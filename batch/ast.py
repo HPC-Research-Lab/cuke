@@ -1,5 +1,5 @@
-import core.asg
-from core.asg import *
+import asg
+from asg import *
 import batch
 
 class Batch(ASTNode):
@@ -80,7 +80,7 @@ def bov(v1: Batch, v2: Batch):
     return BatchOp('vec_outer_vec', v1, v2)
 
 class BatchOp(Batch):
-    Types = ['scal_mul_vec', 'vec_mul_vec', 'vec_mul_mat', 'vec_outer_vec'] + list(core.asg.arith_op.keys())
+    Types = ['scal_mul_vec', 'vec_mul_vec', 'vec_mul_mat', 'vec_outer_vec'] + list(asg.arith_op.keys())
 
     def __init__(self, op_type, *operators):
         assert op_type in BatchOp.Types
@@ -107,7 +107,7 @@ class BatchOp(Batch):
 
         name = f'{op_type}_' + '_'.join([op.name if hasattr(op, 'name') else '' for op in self.operators])
 
-        if op_type in core.asg.arith_op:
+        if op_type in asg.arith_op:
             match op_type:
                 case 'add':
                     res = self.operators[0].base + self.operators[1].base

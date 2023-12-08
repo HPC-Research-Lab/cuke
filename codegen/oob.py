@@ -1,7 +1,6 @@
 import codegen.cpu
-import transform.fuse
-from core.ir import *
-from core.asg import *
+from ir import *
+from asg import *
 from helpers import rebind_iterate
 import helpers
 from transform.fuse import fuser, basic_rule

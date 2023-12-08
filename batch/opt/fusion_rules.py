@@ -1,7 +1,5 @@
-from core.ir import *
-from batch.ast import *
+from ir import *
 from batch.ast2ir import *
-import codegen
 
 
 def get_same_loop(outloop, fusedloop):

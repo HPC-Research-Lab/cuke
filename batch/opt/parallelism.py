@@ -1,7 +1,4 @@
-from core.ir import *
-from batch.ast import *
 from batch.ast2ir import *
-import codegen
 from batch.opt.ir import *
 # for better optimization on GPU
 

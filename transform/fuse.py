@@ -1,8 +1,8 @@
-from core.asg import *
-from core.ir import *
+from asg import *
+from ir import *
 import codegen
-from helpers import get_obj, get_val, ASGTraversal, rebind_iterate, IRTraversal, ir_defs, ir_uses, remove_decl, clear_compute, ir_find_defs, same_object
-
+from helpers import get_obj, get_val, ASGTraversal, rebind_iterate, ir_defs, ir_uses, remove_decl, clear_compute, \
+    ir_find_defs, same_object
 
 
 class fuser:
@@ -20,9 +20,6 @@ class fuser:
         t = ASGTraversal(action)
         t(node)
         return node
-
-
-
 
 
 # TODO: reimplement this with IRTraversal
@@ -99,9 +96,10 @@ def _replace_arrindex_with_scalar(ir, old, new):
     elif type(ir) == Code:
         if type(ir.output[1]) in (Indexing, Scalar):
             obj = get_obj(ir.output[1])
-            if obj.dobject_id== old.dobject_id:
+            if obj.dobject_id == old.dobject_id:
                 ir.output = (ir.output[0], new)
         # TODO: replace inputs
+
 
 def match_orders(order1, order2):
     if len(order1) == len(order2):
@@ -112,15 +110,16 @@ def match_orders(order1, order2):
             x2 = get_val(order2[i][1].start)
             y2 = get_val(order2[i][1].end)
             z2 = get_val(order2[i][1].step)
-            if x1 == None or not same_object(x1, x2):
+            if x1 == None or not (x1 == x2 or same_object(x1, x2)):
                 return False
-            if y1 == None or not same_object(y1, y2):
+            if y1 == None or not (y1 == y2 or same_object(y1, y2)):
                 return False
-            if z1 == None and not same_object(z1, z2):
+            if z1 == None and not (z1 == z2 or same_object(z1, z2)):
                 return False
         return True
     else:
         return False
+
 
 def merge_loops(order1, order2, data, this_node, input_node):
     if match_orders(order1, order2):
@@ -129,7 +128,7 @@ def merge_loops(order1, order2, data, this_node, input_node):
             ol = order2[i][1]
             rebind_iterate(order2[-1][1], ol.iterate, nl.iterate)
             if i < len(order1) - 1:
-                nl.body[0:0] = [s for s in ol.body if s != order2[i+1][1]]
+                nl.body[0:0] = [s for s in ol.body if s != order2[i + 1][1]]
             if 'loop_ofs' in ol.attr:
                 if 'loop_ofs' in nl.attr:
                     nl.attr['loop_ofs'] = max(nl.attr['loop_ofs'], ol.attr['loop_ofs'])
@@ -175,27 +174,41 @@ def merge_loops(order1, order2, data, this_node, input_node):
 
 
 def fuse_operators(op1, order1, op2):
-    if len(order1) > 0 and len(op2.output_order) > 0:
+    if len(order1) > 0:
         merge_loops(order1, op2.output_order, op2.eval, op1, op2)
 
 
 def basic_rule(node, res):
     if type(node) == TensorOp and node.op_type in elementwise_op:
-        if type(node.operators[0]) == TensorOp and len(node.operators[0].ref_by) == 1:
-            if node.operators[0].op_type in (elementwise_op + ['setval', 'apply', 'einsum']):
-                fuse_operators(node, node.input_orders[0], node.operators[0])
+        if type(node.operators[0]) == TensorOp and node.operators[0].op_type in (
+                elementwise_op + ['apply', 'einsum', 'setval']) and len(
+                node.operators[0].ref_by) == 1:
+            fuse_operators(node, node.input_orders[0], node.operators[0])
 
         if node.op_type in binary_elw:
-            if type(node.operators[1]) == TensorOp and len(node.operators[1].ref_by) == 1:
-                if node.operators[1].op_type in (elementwise_op + ['setval', 'apply', 'einsum']):
-                   fuse_operators(node, node.input_orders[1], node.operators[1])
+            if type(node.operators[1]) == TensorOp and node.operators[1].op_type in (
+                    elementwise_op + ['apply', 'einsum', 'setval']) and len(
+                    node.operators[1].ref_by) == 1:
+                fuse_operators(node, node.input_orders[1], node.operators[1])
 
     elif type(node) == TensorOp and node.op_type == 'apply':
-        cond = node.operators[2+2*node.nparams]
+        cond = node.operators[2 + 2 * node.nparams]
         if cond != None:
             this_loop = node.output_order[0]
             fuse_operators(node, [this_loop], cond)
 
+    elif type(node) == TensorOp and node.op_type == 'index':
+        if type(node.operators[1]) == TensorOp and node.operators[1].op_type in (
+                elementwise_op + ['setval']) and len(
+                node.operators[1].ref_by) == 1:
+            assert len(node.operators[1]._size()) == 0
+            # TODO
+            # dfs = ir_find_defs(node.operators[1].compute, node.operators[1].eval)
+            # if len(dfs) > 0:
+            #     df = dfs[-1].rhs
+            #     rebind_iterate(node.compute, node.opertors[1].eval, df)
+            #     remove_decl(node.operators[1], node.operators[1].eval)
+            # fuse_operators(node, node.input_orders[1], node.operators[1])
 
 
 def test1():
@@ -228,6 +241,7 @@ def test2():
     f.register(basic_rule)
     code = codegen.cpu.print_cpp(f.fuse(ir1))
     print(code)
+
 
 def test3():
     A = Tensor('a', (10, 20))

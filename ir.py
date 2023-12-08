@@ -67,10 +67,10 @@ class FilterLoop(Loop):
 
 
 class Scalar(DObject):
-    def __init__(self, dtype: str, name: str = None, is_arg=False):
+    def __init__(self, dtype: str, name: str = None):
         super().__init__(dtype, [])
         self.__name__ = name if name else f's{self.dobject_id}'
-        self.is_arg = is_arg
+        self.attr['is_arg'] = False
 
     def name(self):
         return self.__name__
@@ -96,10 +96,10 @@ class Slice(IR):
 
 
 class Ndarray(DObject):
-    def __init__(self, dtype: str, size: tuple, name: str = None, is_arg=False):
+    def __init__(self, dtype: str, size: tuple, name: str = None):
         super().__init__(dtype, size)
         self.__name__ = name if name else f'arr{self.dobject_id}'
-        self.is_arg = is_arg
+        self.attr['is_arg'] = False
 
     def __getitem__(self, item):
         return f'{self.__name__}[{item}]'
