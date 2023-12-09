@@ -1,4 +1,4 @@
-from helpers import ASGTraversal, IRTraversal, get_obj, replace_all_ref
+from helpers import ASGTraversal, IRTraversal, get_obj, replace_all_ref, same_object, flatten
 from asg import *
 from ir import *
 from transform.fuse import fuser, basic_rule
@@ -49,13 +49,13 @@ def _set_loop_levels(nodeir, num_procs):
     def action(ir, res):
         if type(ir) in (list, tuple):
             return [True]
-        if type(ir) == Loop:
+        if isinstance(ir, Loop):
             if not 'plevel' in ir.attr and not 'nprocs' in ir.attr:
                 ir.attr['plevel'] = 0
                 ir.attr['nprocs'] = [(num_procs[0], ir)]
                 ir.attr['tid'] = Scalar('int', 'tid0')
-            for stmt in ir.body:
-                if type(stmt) == Loop:
+            for stmt in flatten(ir.body):
+                if isinstance(stmt, Loop):
                     if 'plevel' in ir.attr and ir.attr['plevel'] + 1 < len(num_procs):
                         stmt.attr['plevel'] = ir.attr['plevel'] + 1
                         stmt.attr['nprocs'] = ir.attr['nprocs'] + [(num_procs[stmt.attr['plevel']], stmt)]
@@ -80,9 +80,9 @@ def _isolate_vars(node):
     def find_data_races(ir, new_vars):
         if len(new_vars) == 0:
             new_vars.append({})
-        if type(ir) == Loop:
+        if isinstance(ir, Loop):
             if 'nprocs' in ir.attr:
-                for stmt in ir.body:
+                for stmt in flatten(ir.body):
                     if type(stmt) == Assignment:
                         for v in vars:
                             if v not in new_vars[0]:
@@ -93,7 +93,7 @@ def _isolate_vars(node):
                                     for l in ir.attr['nprocs']:
                                         indexed = False
                                         for ii in idx:
-                                            if ('output_axis' in l[1].attr and l[1].attr['output_axis'] == ii.attr['loop'].attr['output_axis']) or ii.dobject_id == l[1].iterate.dobject_id:
+                                            if ('output_axis' in l[1].attr and l[1].attr['output_axis'] == ii.attr['loop'].attr['output_axis']) or same_object(ii, l[1].iterate):
                                                 indexed = True
                                                 break
                                         if not indexed:
@@ -108,48 +108,52 @@ def _isolate_vars(node):
     new_vars = t2(node.compute)[0]
     return new_vars
 
-def parallelize(node, num_procs=[16]):
+class parallelizer:
 
-    def action(n, res):
-        if len(res) == 0:
-            res.append({})
-        if len(n.compute) != 0:
-            _set_loop_levels(n.compute, num_procs)
-            res[0].update(_isolate_vars(n))
+    def __init__(self, num_procs=[16]):
+        self.num_procs = num_procs
 
-    t = ASGTraversal(action)
-    to_replace = t(node)[0]
+    def __call__(self, node):
+        def action(n, res):
+            if len(res) == 0:
+                res.append({})
+            if len(n.compute) != 0:
+                _set_loop_levels(n.compute, self.num_procs)
+                res[0].update(_isolate_vars(n))
 
-    def replace_decls(n, res):
-        decl = []
-        for d in n.decl:
-            v = d.dobject.dobject_id
-            replace_with = None
-            for n in to_replace:
-                if n.dobject_id == v:
-                    replace_with = to_replace[n][0]
-                    break
-            if replace_with != None:
-                decl.append(Decl(replace_with))
-            else:
-                decl.append(d)
-        n.decl = decl
+        t = ASGTraversal(action)
+        to_replace = t(node)[0]
 
-    t3 = ASGTraversal(replace_decls)
-    t3(node)
+        def replace_decls(n, res):
+            decl = []
+            for d in n.decl:
+                v = d.dobject.dobject_id
+                replace_with = None
+                for n in to_replace:
+                    if n.dobject_id == v:
+                        replace_with = to_replace[n][0]
+                        break
+                if replace_with != None:
+                    decl.append(Decl(replace_with))
+                else:
+                    decl.append(d)
+            n.decl = decl
 
-    def replace_refs(n, res):
-        if len(n.compute) > 0:
-            for s in to_replace:
-                new_var = to_replace[s][0]
-                for l in to_replace[s][1]:
-                    new_var = Indexing(new_var, l.attr['tid'])
-                replace_all_ref(n.compute, s, new_var)
+        t3 = ASGTraversal(replace_decls)
+        t3(node)
 
-    t4 = ASGTraversal(replace_refs)
-    t4(node)
+        def replace_refs(n, res):
+            if len(n.compute) > 0:
+                for s in to_replace:
+                    new_var = to_replace[s][0]
+                    for l in to_replace[s][1]:
+                        new_var = Indexing(new_var, l.attr['tid'])
+                    replace_all_ref(n.compute, s, new_var)
 
-    return node
+        t4 = ASGTraversal(replace_refs)
+        t4(node)
+
+        return node
 
 
 def test1():

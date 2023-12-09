@@ -1,4 +1,5 @@
 import codegen.cpu
+import transform
 from asg import *
 from asg2ir import gen_ir
 from transform import parallelize
@@ -64,8 +65,9 @@ def test3():
     colidx = Tensor((nedges, ), dtype='int', name='colidx')
     g = Graph(rowptr, colidx)
     res = edges.apply(lambda e: intersect(g.get_neighbor(e[0]), g.get_neighbor(e[1])).size(0))
+    res = res.sum()
     res = gen_ir(res)
-    # res = parallelize.parallelize(res)
+    # transform.passes.append(parallelize.parallelizer())
     code = codegen.cpu.print_cpp(res)
     print(code)
 

@@ -457,8 +457,6 @@ class TensorOp(Tensor):
 
         self.input_orders = [[] for o in self.operators]
 
-        self.attr['scope'] = 'global'
-
 
 
 

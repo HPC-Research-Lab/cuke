@@ -176,7 +176,8 @@ def collect_ir(ast, stmt):
     def action(node, res):
         if isinstance(node, asg.Tensor):
             res.extend(node.decl)
-            res.extend(node.compute)
+            if not 'scope' in node.attr:
+                res.extend(node.compute)
 
     t = ASGTraversal(action)
     stmt.extend(t(ast))
@@ -204,6 +205,15 @@ def get_val(stmt):
     else:
         return stmt
 
+
+def flatten(li: list|tuple):
+    res = []
+    for t in li:
+        if type(t) in (list, tuple):
+            res.extend(flatten(t))
+        else:
+            res.append(t)
+    return res
 
 class IRTraversal:
 
@@ -408,15 +418,15 @@ def _remove_compute_of_node(loop, node):
 
 def clear_compute(node):
     node.compute.clear()
-    if 'scope' in node.attr:
-        scope = node.attr['scope']
-        compute = []
-        for stmt in scope.compute:
-            if not ('asgnode' in stmt.attr and stmt.attr['asgnode'] == node):
-                if type(stmt) == ir.Loop:
-                    _remove_compute_of_node(stmt, node)
-                compute.append(stmt)
-        scope.compute = compute
+    # if 'scope' in node.attr:
+    #     scope = node.attr['scope']
+    #     compute = []
+    #     for stmt in scope.compute:
+    #         if not ('asgnode' in stmt.attr and stmt.attr['asgnode'] == node):
+    #             if type(stmt) == ir.Loop:
+    #                 _remove_compute_of_node(stmt, node)
+    #             compute.append(stmt)
+    #     scope.compute = compute
 
 
 def ir_find_defs(stmt, data):

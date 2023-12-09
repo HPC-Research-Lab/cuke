@@ -1,5 +1,5 @@
 import torch
-from asg import Tensor, Var
+from asg import Tensor, Var, apply
 from asg2ir import gen_ir
 import codegen
 import run
@@ -611,9 +611,9 @@ def test_math2():
 def apply_test1():
     num_edges = 20
     length = 50
-    rowidx = Tensor('rowidx', (num_edges,), dtype='int')
-    colidx = Tensor('colidx', (num_edges,), dtype='int')
-    edge_idx = Tensor('edge_idx', (length,), dtype='int')
+    rowidx = Tensor((num_edges,), dtype='int', name='rowidx')
+    colidx = Tensor((num_edges,), dtype='int', name='colidx')
+    edge_idx = Tensor((length,), dtype='int', name='edge_idx')
 
 
     def apply_func(edge_id):
@@ -623,7 +623,7 @@ def apply_test1():
 
     res = edge_idx.apply(apply_func)
     code = codegen.cpu.print_cpp(gen_ir(res))
-    print(helpers.get_input_nodes(res))
+    print(code)
 
     edge_idx = torch.randint(0, num_edges, (length,)).to(torch.int32)
     rowidx = torch.randint(0, 1000, (num_edges,)).to(torch.int32)
@@ -660,12 +660,12 @@ def apply_test2():
 
 
 def apply_test3():
-    d1 = Var('d1')
-    d2 = Var('d2')
-    d3 = Var('d3')
-    A = Tensor('A', (d1, d2), dtype='int')
-    B = Tensor('B', (d2, ), dtype='int')
-    C = Tensor('C', (d3, ), dtype='int')
+    d1 = Var('int')
+    d2 = Var('int')
+    d3 = Var('int')
+    A = Tensor((d1, d2), dtype='int')
+    B = Tensor((d2, ), dtype='int')
+    C = Tensor((d3, ), dtype='int')
 
 
     def apply_func(item):
@@ -683,11 +683,11 @@ def apply_test3():
 
 
 def apply_test4():
-    d1 = Var('d1')
-    d2 = Var('d2')
-    d3 = Var('d3')
-    A = Tensor('A', (d1, d2), dtype='int')
-    B = Tensor('B', (d2, ))
+    d1 = Var('int')
+    d2 = Var('int')
+    d3 = Var('int')
+    A = Tensor((d1, d2), dtype='int')
+    B = Tensor((d2, ))
 
 
     def apply_func(item):
@@ -703,17 +703,17 @@ def apply_test4():
     print(code)
 
 def apply_test5():
-    A = Tensor('A', (10, 20))
-    B = Tensor('B', (10, 20))
+    A = Tensor((10, 20))
+    B = Tensor((10, 20))
     res = apply(lambda a, b: a + b, (A, B))
-    code = codegen.cpu.print_cpp(res._gen_ir())
+    code = codegen.cpu.print_cpp(gen_ir(res))
     print(code)
 
 def apply_test6():
-    A = Tensor('A', (10, 20))
-    B = Tensor('B', (10, 20))
+    A = Tensor((10, 20))
+    B = Tensor((10, 20))
     res = apply(lambda a, b: a + b, (A, B), (1, 1))
-    code = codegen.cpu.print_cpp(res._gen_ir())
+    code = codegen.cpu.print_cpp(gen_ir(res))
     print(code)
 
 
@@ -1215,11 +1215,11 @@ if __name__ == "__main__":
     # test_math1()
     # test_math2()
     # apply_test1()
-    apply_test2()
+    # apply_test2()
     # apply_test3()
     # apply_test4()
-    # apply_test5()
-    # apply_test6()
+    apply_test5()
+    apply_test6()
     # apply_test7()
     # apply_test8()
     # apply_test9()

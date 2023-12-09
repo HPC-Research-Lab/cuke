@@ -97,6 +97,8 @@ def lower_bound_padding(asg):
     for l in ir:
         _resolve_loops(l)
 
+    return asg
+
 
 def test1():
     A = Tensor('A', (10, 20))

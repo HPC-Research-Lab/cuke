@@ -448,12 +448,11 @@ def gen_ir(node):
                         l.append((len(l), ret.input_orders[i][j][1]))
 
             def action(n, res):
-                if isinstance(n, asg.Tensor):
-                    for s in n.compute:
-                        s.attr['asgnode'] = n
+                if isinstance(n, asg.Tensor) and not 'scope' in n.attr:
                     res.extend(n.compute)
-                    n.compute.clear()
-                    n.attr['scope'] = node
+                    if True: # TODO: check if n depends on items, if not we don't need to put it in the loop body
+                        outer_loop.body.append(n.compute)
+                        n.attr['scope'] = outer_loop.body
 
             t = helpers.ASGTraversal(action)
             ret_compute = t(ret)
@@ -471,9 +470,8 @@ def gen_ir(node):
             # if there is no compute in the func, we simply assign the result to itself, so that later the lhs of the assignment will be changed to the output array
             if len(ret_compute) == 0:
                 ret_compute.append(ir.Assignment(res, ret.eval))
+                outer_loop.body.extend(ret_compute)
 
-            # the computation of func are added in the outer_loop
-            outer_loop.body.extend(ret_compute)
             node.compute = [outer_loop]
 
             # if there is an offset for output storage
@@ -490,6 +488,7 @@ def gen_ir(node):
 
             if cond != None:
                 counter = node.operators[-1].eval
+                counter.attr['loop'] = outer_loop
                 outer_loop.body.append(ir.Assignment(counter, 1, '+'))
                 assert type(ret_compute[-1]) in (ir.Loop, ir.Assignment)
                 l = ret_compute[-1]

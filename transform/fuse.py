@@ -12,7 +12,7 @@ class fuser:
     def register(self, rule):
         self.rules.append(rule)
 
-    def fuse(self, node):
+    def __call__(self, node):
         def action(node, res):
             for r in self.rules:
                 r(node, res)
@@ -121,6 +121,7 @@ def match_orders(order1, order2):
         return False
 
 
+
 def merge_loops(order1, order2, data, this_node, input_node):
     if match_orders(order1, order2):
         for i in range(len(order1)):
@@ -142,7 +143,7 @@ def merge_loops(order1, order2, data, this_node, input_node):
                 this_node.decl.append(Decl(df))
             else:
                 df = dfs[-1].rhs
-                order2[-1][1].body = [s for s in order2[-1][1].body if not ir_defs(s, data)]
+                order2[-1][1].body.remove(dfs[-1])
 
             if type(order1[-1][1]) == FilterLoop and data.dobject_id == get_obj(order1[-1][1].cond).dobject_id:
                 order1[-1][1].cond_body.extend(order2[-1][1].body)
@@ -176,6 +177,17 @@ def merge_loops(order1, order2, data, this_node, input_node):
 def fuse_operators(op1, order1, op2):
     if len(order1) > 0:
         merge_loops(order1, op2.output_order, op2.eval, op1, op2)
+    else:
+        dfs = ir_find_defs(op2.compute, op2.eval)
+        if len(dfs) > 0:
+            if not ir_uses(dfs[-1], op2.eval):
+                df = dfs[-1].rhs
+                op2.compute.remove(dfs[-1])
+                op1.compute[0:0] = op2.compute
+                _replace_arrindex_with_scalar(op1.compute, op2.eval, df)
+                clear_compute(op2)
+                remove_decl(op2, op2.eval)
+
 
 
 def basic_rule(node, res):
@@ -202,14 +214,13 @@ def basic_rule(node, res):
                 elementwise_op + ['setval']) and len(
                 node.operators[1].ref_by) == 1:
             assert len(node.operators[1]._size()) == 0
-            # TODO
-            # dfs = ir_find_defs(node.operators[1].compute, node.operators[1].eval)
-            # if len(dfs) > 0:
-            #     df = dfs[-1].rhs
-            #     rebind_iterate(node.compute, node.opertors[1].eval, df)
-            #     remove_decl(node.operators[1], node.operators[1].eval)
-            # fuse_operators(node, node.input_orders[1], node.operators[1])
-
+            dfs = ir_find_defs(node.operators[1].compute, node.operators[1].eval)
+            if len(dfs) > 0:
+                if not ir_uses(dfs[-1], node.operators[1].eval):
+                    df = dfs[-1].rhs
+                    rebind_iterate(node.eval, node.operators[1].eval, df)
+                    clear_compute(node.operators[1])
+                    remove_decl(node.operators[1], node.operators[1].eval)
 
 def test1():
     A = Tensor('a', (10, 20))

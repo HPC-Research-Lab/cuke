@@ -1,3 +1,4 @@
+import transform
 from helpers import collect_ir, get_input_nodes, ir_find_defs
 import random
 import string
@@ -90,18 +91,21 @@ def to_string(stmt):
             for kw in stmt.inputs:
                 code = code.replace(kw, to_string(stmt.inputs[kw]))
             return code + '\n'
+        case 'list' | 'tuple':
+            code = ''
+            for s in stmt:
+                code += to_string(s)
+            return code
         case _:
             return str(stmt)
 
 
 def print_cpp(node):
 
-    fu = fuser()
-    fu.register(basic_rule)
-    node = fu.fuse(node)
+    for p in transform.passes:
+        node = p(node)
 
     stmts = []
-    lower_bound_padding(node)
     collect_ir(node, stmts)
 
     # fix dynamic size allocation
@@ -113,9 +117,6 @@ def print_cpp(node):
                     if 'dynamic_size' in d.dobject.size[i].attr:
                         d.dobject.size[i] = ir.Literal(4096, 'int')
                         # TODO: remove the decl of the variable if it is not used elsewhere
-
-
-
 
     args = get_input_nodes(node)
     args = ', '.join([f'torch::Tensor obj_{a}' if type(args[a]) == asg.Tensor else f'{args[a].dtype} {a}' for a in args])
